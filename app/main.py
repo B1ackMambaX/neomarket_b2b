@@ -32,9 +32,9 @@ app.add_middleware(
 
 app.add_exception_handler(DomainException, domain_exception_handler)
 
-# Роутеры подключаются здесь по мере добавления модулей:
-# from app.api.v1.routers import orders
-# app.include_router(orders.router, prefix="/api/v1")
+from app.api.v1.routers.products import router as products_router
+
+app.include_router(products_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["System"])

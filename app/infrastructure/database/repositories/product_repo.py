@@ -4,12 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities.product import ProductEntity, ProductImageEntity
+from app.domain.entities.product import ProductEntity, ProductImageEntity, SkuEntity
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.value_objects.product_status import ProductStatus
 from app.infrastructure.database.models.product import ProductModel
 from app.infrastructure.database.models.product_image import ProductImageModel
+from app.infrastructure.database.models.sku import SkuModel
 
 
 class SQLAlchemyProductRepository(AbstractProductRepository):
@@ -19,7 +20,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None:
         result = await self._session.execute(
             select(ProductModel)
-            .options(selectinload(ProductModel.images))
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.skus),
+            )
             .where(ProductModel.id == product_id)
         )
         model = result.scalar_one_or_none()
@@ -82,6 +86,19 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             )
             for img in getattr(model, "images", [])
         ]
+        skus = [
+            SkuEntity(
+                id=sku.id,
+                product_id=sku.product_id,
+                name=sku.name,
+                price=sku.price,
+                active_quantity=sku.active_quantity,
+                is_active=sku.is_active,
+                created_at=sku.created_at,
+                updated_at=sku.updated_at,
+            )
+            for sku in getattr(model, "skus", [])
+        ]
         return ProductEntity(
             id=model.id,
             seller_id=model.seller_id,
@@ -93,6 +110,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             updated_at=model.updated_at,
             moderated_at=model.moderated_at,
             images=images,
+            skus=skus,
         )
 
     def _to_model(self, entity: ProductEntity) -> ProductModel:

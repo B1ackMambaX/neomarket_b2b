@@ -25,3 +25,6 @@ class ProductService:
             description=payload.description,
         )
         return await self._product_repo.save(product)
+
+    async def get_product_by_id(self, product_id: UUID) -> ProductEntity | None:
+        return await self._product_repo.get_by_id(product_id)

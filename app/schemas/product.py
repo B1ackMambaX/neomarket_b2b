@@ -12,6 +12,20 @@ class ProductCreate(BaseModel):
     description: str | None = None
 
 
+class ProductImageResponse(BaseModel):
+    id: UUID
+    url: str
+    ordering: int
+
+
+class SkuResponse(BaseModel):
+    id: UUID
+    name: str
+    price: int
+    active_quantity: int
+    is_active: bool
+
+
 class ProductResponse(BaseModel):
     id: UUID
     seller_id: UUID
@@ -21,3 +35,5 @@ class ProductResponse(BaseModel):
     status: ProductStatus
     created_at: datetime
     updated_at: datetime
+    images: list[ProductImageResponse] = []
+    skus: list[SkuResponse] = []

@@ -16,6 +16,18 @@ class ProductImageEntity:
 
 
 @dataclass
+class SkuEntity:
+    product_id: UUID
+    name: str
+    price: int
+    id: UUID = field(default_factory=uuid4)
+    active_quantity: int = 0
+    is_active: bool = True
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
 class ProductEntity:
     seller_id: UUID
     category_id: UUID
@@ -27,6 +39,7 @@ class ProductEntity:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     moderated_at: datetime | None = None
     images: list[ProductImageEntity] = field(default_factory=list)
+    skus: list[SkuEntity] = field(default_factory=list)
 
     @classmethod
     def create(

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from app.domain.entities.product import ProductEntity
+from app.domain.entities.product import ProductEntity, ProductImageEntity
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.seller_repo import AbstractSellerRepository
 from app.schemas.product import ProductCreate, ProductUpdate
@@ -45,4 +45,16 @@ class ProductService:
         if payload.description is not None:
             product.description = payload.description
 
-        return await self._product_repo.save(product)
+        images = None
+
+        if payload.images is not None:
+            images = [
+                ProductImageEntity(
+                    product_id=product.id,
+                    url=image.url,
+                    ordering=image.ordering,
+                )
+                for image in payload.images
+            ]
+
+        return await self._product_repo.update(product, images)

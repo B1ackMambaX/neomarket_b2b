@@ -68,6 +68,46 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         await self._session.flush()
         return product
 
+    async def update(
+        self,
+        product: ProductEntity,
+        images: list[ProductImageEntity] | None = None,
+    ) -> ProductEntity:
+        result = await self._session.execute(
+            select(ProductModel)
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.skus),
+            )
+            .where(ProductModel.id == product.id)
+        )
+        model = result.scalar_one_or_none()
+
+        if model is None:
+            raise NotFoundException(f"Product {product.id} not found")
+
+        model.category_id = product.category_id
+        model.title = product.title
+        model.description = product.description
+        model.status = product.status.value
+        model.moderated_at = product.moderated_at
+
+        if images is not None:
+            model.images = [
+                ProductImageModel(
+                    id=image.id,
+                    product_id=product.id,
+                    url=image.url,
+                    ordering=image.ordering,
+                )
+                for image in images
+            ]
+
+        await self._session.flush()
+        await self._session.refresh(model)
+
+        return await self.get_or_raise(product.id)
+
     async def delete(self, product_id: UUID) -> None:
         result = await self._session.execute(select(ProductModel).where(ProductModel.id == product_id))
         model = result.scalar_one_or_none()

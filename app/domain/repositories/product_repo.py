@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.domain.entities.product import ProductEntity
+from app.domain.entities.product import ProductEntity, ProductImageEntity
 from app.domain.value_objects.product_status import ProductStatus
 
 
@@ -32,6 +32,13 @@ class AbstractProductRepository(ABC):
 
     @abstractmethod
     async def save(self, product: ProductEntity) -> ProductEntity: ...
+
+    @abstractmethod
+    async def update(
+        self,
+        product: ProductEntity,
+        images: list[ProductImageEntity] | None = None,
+    ) -> ProductEntity: ...
 
     @abstractmethod
     async def delete(self, product_id: UUID) -> None: ...

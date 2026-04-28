@@ -12,6 +12,12 @@ class ProductCreate(BaseModel):
     description: str | None = None
 
 
+class ProductUpdate(BaseModel):
+    category_id: UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = None
+
+
 class ProductImageResponse(BaseModel):
     id: UUID
     url: str

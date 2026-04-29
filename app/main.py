@@ -36,6 +36,9 @@ from app.api.v1.routers.products import router as products_router
 
 app.include_router(products_router, prefix="/api/v1")
 
+from app.api.v1.routers.skus import router as skus_router 
+
+app.include_router(skus_router, prefix="/api/v1") 
 
 @app.get("/health", tags=["System"])
 async def health_check():

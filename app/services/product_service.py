@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from app.domain.entities.product import ProductEntity, ProductImageEntity
+from app.domain.entities.product import ProductEntity, ProductImageEntity, SkuEntity
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.seller_repo import AbstractSellerRepository
-from app.schemas.product import ProductCreate, ProductUpdate
+from app.schemas.product import ProductCreate, ProductUpdate, SkuCreate, SkuUpdate
 
 
 class ProductService:
@@ -58,3 +58,18 @@ class ProductService:
             ]
 
         return await self._product_repo.update(product, images)
+
+    async def create_sku(self, product_id: UUID, payload: SkuCreate) -> SkuEntity:
+        product = await self._product_repo.get_or_raise(product_id)
+        sku = SkuEntity.create(
+            product_id=product.id,
+            name=payload.name,
+            price=payload.price,
+            active_quantity=payload.active_quantity,
+            is_active=payload.is_active,
+        )
+        return await self._product_repo.save_sku(sku)
+
+    async def update_sku(self, sku_id: UUID, payload: SkuUpdate) -> SkuEntity:
+        sku = await self._product_repo.get_sku_or_raise(sku_id)
+        return await self._product_repo.update_sku(sku)

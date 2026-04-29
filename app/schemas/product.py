@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,21 @@ class ProductImageResponse(BaseModel):
     id: UUID
     url: str
     ordering: int
+
+
+class SkuCreate(BaseModel):
+    product_id: UUID
+    name: str
+    price: int
+    active_quantity: int = 0
+    is_active: bool = True
+
+
+class SkuUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[int] = None
+    active_quantity: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class SkuResponse(BaseModel):

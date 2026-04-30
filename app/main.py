@@ -32,9 +32,11 @@ app.add_middleware(
 
 app.add_exception_handler(DomainException, domain_exception_handler)
 
+from app.api.v1.routers.invoices import router as invoices_router
 from app.api.v1.routers.products import router as products_router
 
 app.include_router(products_router, prefix="/api/v1")
+app.include_router(invoices_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["System"])

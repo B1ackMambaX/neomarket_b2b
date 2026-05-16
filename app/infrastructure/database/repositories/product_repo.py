@@ -4,11 +4,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities.product import ProductEntity, ProductImageEntity
+from app.domain.entities.product import CharacteristicEntity, ProductEntity, ProductImageEntity
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.value_objects.product_status import ProductStatus
 from app.infrastructure.database.models.product import ProductModel
+from app.infrastructure.database.models.product_characteristic import ProductCharacteristicModel
 from app.infrastructure.database.models.product_image import ProductImageModel
 
 
@@ -19,7 +20,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None:
         result = await self._session.execute(
             select(ProductModel)
-            .options(selectinload(ProductModel.images))
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+            )
             .where(ProductModel.id == product_id)
         )
         model = result.scalar_one_or_none()
@@ -38,7 +42,11 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         limit: int = 20,
         offset: int = 0,
     ) -> list[ProductEntity]:
-        query = select(ProductModel).where(ProductModel.seller_id == seller_id)
+        query = (
+            select(ProductModel)
+            .options(selectinload(ProductModel.images), selectinload(ProductModel.characteristics))
+            .where(ProductModel.seller_id == seller_id)
+        )
         if status is not None:
             query = query.where(ProductModel.status == status.value)
         query = query.limit(limit).offset(offset)
@@ -53,6 +61,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
     ) -> list[ProductEntity]:
         result = await self._session.execute(
             select(ProductModel)
+            .options(selectinload(ProductModel.images), selectinload(ProductModel.characteristics))
             .where(ProductModel.status == status.value)
             .limit(limit)
             .offset(offset)
@@ -60,7 +69,31 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         return [self._to_entity(m) for m in result.scalars().all()]
 
     async def save(self, product: ProductEntity) -> ProductEntity:
-        await self._session.merge(self._to_model(product))
+        model = self._to_model(product)
+        await self._session.merge(model)
+
+        # Persist images: delete existing then re-insert to keep sync with entity state
+        await self._session.execute(
+            select(ProductImageModel).where(ProductImageModel.product_id == product.id)
+        )
+        for img in product.images:
+            img_model = ProductImageModel(
+                id=img.id,
+                product_id=product.id,
+                url=img.url,
+                ordering=img.ordering,
+            )
+            await self._session.merge(img_model)
+
+        for char in product.characteristics:
+            char_model = ProductCharacteristicModel(
+                id=char.id,
+                product_id=product.id,
+                name=char.name,
+                value=char.value,
+            )
+            await self._session.merge(char_model)
+
         await self._session.flush()
         return product
 
@@ -82,17 +115,28 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             )
             for img in getattr(model, "images", [])
         ]
+        characteristics = [
+            CharacteristicEntity(id=c.id, name=c.name, value=c.value)
+            for c in getattr(model, "characteristics", [])
+        ]
         return ProductEntity(
             id=model.id,
             seller_id=model.seller_id,
             category_id=model.category_id,
             title=model.title,
             description=model.description,
+            slug=model.slug,
             status=ProductStatus(model.status),
+            deleted=model.deleted,
+            blocked=model.blocked,
+            blocking_reason_id=model.blocking_reason_id,
+            moderator_comment=model.moderator_comment,
             created_at=model.created_at,
             updated_at=model.updated_at,
             moderated_at=model.moderated_at,
             images=images,
+            characteristics=characteristics,
+            skus=[],
         )
 
     def _to_model(self, entity: ProductEntity) -> ProductModel:
@@ -102,6 +146,11 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             category_id=entity.category_id,
             title=entity.title,
             description=entity.description,
+            slug=entity.slug,
             status=entity.status.value,
+            deleted=entity.deleted,
+            blocked=entity.blocked,
+            blocking_reason_id=entity.blocking_reason_id,
+            moderator_comment=entity.moderator_comment,
             moderated_at=entity.moderated_at,
         )

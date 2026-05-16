@@ -13,5 +13,5 @@ async def domain_exception_handler(request: Request, exc: DomainException) -> JS
     status_code = _STATUS_MAP.get(type(exc), 400)
     return JSONResponse(
         status_code=status_code,
-        content={"error": exc.code, "message": str(exc)},
+        content={"code": exc.code, "message": str(exc)},
     )

@@ -11,3 +11,7 @@ build/
 *.egg-info/
 .venv/
 venv/
+.claude
+docs
+CLAUDE.md
+graphify-out

@@ -16,17 +16,31 @@ class ProductImageEntity:
 
 
 @dataclass
+class CharacteristicEntity:
+    name: str
+    value: str
+    id: UUID = field(default_factory=uuid4)
+
+
+@dataclass
 class ProductEntity:
     seller_id: UUID
     category_id: UUID
     title: str
     id: UUID = field(default_factory=uuid4)
     description: str | None = None
-    status: ProductStatus = ProductStatus.DRAFT
+    slug: str | None = None
+    status: ProductStatus = ProductStatus.CREATED
+    deleted: bool = False
+    blocked: bool = False
+    blocking_reason_id: UUID | None = None
+    moderator_comment: str | None = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     moderated_at: datetime | None = None
     images: list[ProductImageEntity] = field(default_factory=list)
+    characteristics: list[CharacteristicEntity] = field(default_factory=list)
+    skus: list = field(default_factory=list)
 
     @classmethod
     def create(
@@ -35,11 +49,22 @@ class ProductEntity:
         category_id: UUID,
         title: str,
         description: str | None = None,
+        slug: str | None = None,
+        images: list[ProductImageEntity] | None = None,
+        characteristics: list[CharacteristicEntity] | None = None,
     ) -> "ProductEntity":
-        return cls(seller_id=seller_id, category_id=category_id, title=title, description=description)
+        return cls(
+            seller_id=seller_id,
+            category_id=category_id,
+            title=title,
+            description=description,
+            slug=slug,
+            images=images or [],
+            characteristics=characteristics or [],
+        )
 
     def submit_for_moderation(self) -> None:
-        if self.status != ProductStatus.DRAFT:
+        if self.status != ProductStatus.CREATED:
             raise DomainException(f"Cannot submit product in status {self.status} for moderation")
         self.status = ProductStatus.ON_MODERATION
         self.updated_at = datetime.utcnow()
@@ -51,12 +76,7 @@ class ProductEntity:
         self.moderated_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
 
-    def reject(self) -> None:
-        if self.status != ProductStatus.ON_MODERATION:
-            raise DomainException(f"Cannot reject product in status {self.status}")
-        self.status = ProductStatus.REJECTED
-        self.updated_at = datetime.utcnow()
-
-    def block(self) -> None:
-        self.status = ProductStatus.BLOCKED
+    def block(self, hard: bool = False) -> None:
+        self.status = ProductStatus.HARD_BLOCKED if hard else ProductStatus.BLOCKED
+        self.blocked = True
         self.updated_at = datetime.utcnow()

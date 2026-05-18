@@ -36,6 +36,13 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
         await self._session.flush()
         return self._to_entity(model)
 
+    async def count_by_product(self, product_id: UUID) -> int:
+        from sqlalchemy import func as sqlfunc
+        result = await self._session.execute(
+            select(sqlfunc.count()).select_from(SkuModel).where(SkuModel.product_id == product_id)
+        )
+        return result.scalar_one()
+
     async def delete(self, sku_id: UUID) -> None:
         result = await self._session.execute(select(SkuModel).where(SkuModel.id == sku_id))
         model = result.scalar_one_or_none()
@@ -49,7 +56,12 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
             product_id=model.product_id,
             name=model.name,
             price=model.price,
+            cost_price=model.cost_price,
+            discount=model.discount,
+            reserved_quantity=model.reserved_quantity,
             active_quantity=model.active_quantity,
+            article=model.article,
+            image=model.image,
             is_active=model.is_active,
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -61,6 +73,11 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
             product_id=entity.product_id,
             name=entity.name,
             price=entity.price,
+            cost_price=entity.cost_price,
+            discount=entity.discount,
+            reserved_quantity=entity.reserved_quantity,
             active_quantity=entity.active_quantity,
+            article=entity.article,
+            image=entity.image,
             is_active=entity.is_active,
         )

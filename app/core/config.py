@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     DEBUG: bool = False
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    MODERATION_URL: str = "http://moderation:8001"
+    B2B_TO_MOD_KEY: str = "changeme"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

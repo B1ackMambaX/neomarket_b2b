@@ -1,11 +1,12 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from app.domain.exceptions import DomainException, NotFoundException, PermissionDeniedException
+from app.domain.exceptions import DomainException, ForbiddenException, NotFoundException, PermissionDeniedException
 
 _STATUS_MAP = {
     NotFoundException: 404,
     PermissionDeniedException: 403,
+    ForbiddenException: 403,
 }
 
 

@@ -1,3 +1,4 @@
+import secrets
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -44,3 +45,9 @@ async def get_seller_id_or_service_key(request: Request) -> UUID | None:
         return UUID(sub)
     except (JWTError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+
+async def require_b2c_service_key(request: Request) -> None:
+    x_service_key = request.headers.get("X-Service-Key") or ""
+    if not secrets.compare_digest(x_service_key, settings.B2C_TO_B2B_KEY):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service key")

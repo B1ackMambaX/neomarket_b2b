@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.value_objects.product_status import ProductStatus
 from app.schemas.common import CharacteristicInput, CharacteristicResponse
-from app.schemas.sku import SKUResponse
+from app.schemas.sku import SKUPublicResponse, SKUResponse
 
 __all__ = [
     "CharacteristicInput",
@@ -95,3 +95,40 @@ class ProductDetailResponse(BaseModel):
     category: CategoryInProductResponse
     blocking_reason: BlockingReasonInProductResponse | None
     field_reports: list[FieldReportResponse]
+
+
+class ProductPublicResponse(BaseModel):
+    id: UUID
+    seller_id: UUID
+    category_id: UUID
+    title: str
+    slug: str | None
+    description: str | None
+    status: ProductStatus
+    images: list[ProductImageResponse]
+    characteristics: list[CharacteristicResponse]
+    skus: list[SKUPublicResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProductPublicShortResponse(BaseModel):
+    id: UUID
+    title: str
+    slug: str | None
+    status: ProductStatus
+    category_id: UUID
+    min_price: int | None
+    cover_image: str | None
+    created_at: datetime
+
+
+class ProductPublicPaginatedResponse(BaseModel):
+    items: list[ProductPublicShortResponse]
+    total_count: int
+    limit: int
+    offset: int
+
+
+class ProductPublicBatchRequest(BaseModel):
+    product_ids: list[UUID] = Field(min_length=1, max_length=100)

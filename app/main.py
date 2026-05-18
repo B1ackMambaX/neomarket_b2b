@@ -46,9 +46,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+from app.api.v1.routers.products import public_router as public_products_router  # noqa: E402
 from app.api.v1.routers.products import router as products_router  # noqa: E402
 from app.api.v1.routers.skus import router as skus_router  # noqa: E402
 
+app.include_router(public_products_router, prefix="/api/v1")
 app.include_router(products_router, prefix="/api/v1")
 app.include_router(skus_router, prefix="/api/v1")
 

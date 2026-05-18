@@ -42,6 +42,7 @@ class AbstractProductRepository(ABC):
         search: str | None = None,
         min_price: int | None = None,
         max_price: int | None = None,
+        characteristic_filters: dict[str, list[str]] | None = None,
         sort: str = "created_desc",
         limit: int = 20,
         offset: int = 0,

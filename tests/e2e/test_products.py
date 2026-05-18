@@ -468,6 +468,7 @@ class _CatalogProductRepo(AbstractProductRepository):
         search=None,
         min_price=None,
         max_price=None,
+        characteristic_filters=None,
         sort="created_desc",
         limit=20,
         offset=0,
@@ -495,6 +496,15 @@ class _CatalogProductRepo(AbstractProductRepository):
                 sku.active_quantity > 0 and sku.price <= max_price for sku in product.skus
             ):
                 continue
+            if characteristic_filters:
+                char_map: dict[str, list[str]] = {}
+                for c in product.characteristics:
+                    char_map.setdefault(c.name, []).append(c.value)
+                if not all(
+                    any(v in char_map.get(name, []) for v in values)
+                    for name, values in characteristic_filters.items()
+                ):
+                    continue
             selected.append(product)
         total_count = len(selected)
         return selected[offset : offset + limit], total_count
@@ -653,3 +663,50 @@ async def _post_catalog_batch(products: list[ProductEntity], product_ids: list[U
         )
     app.dependency_overrides.pop(get_product_service, None)
     return response
+
+
+@pytest.mark.asyncio
+async def test_catalog_characteristic_filter_returns_matching_products(seller_id):
+    apple = _make_catalog_product(seller_id)
+    apple.characteristics.clear()
+    apple.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+
+    samsung = _make_catalog_product(seller_id)
+    samsung.characteristics.clear()
+    samsung.characteristics.append(CharacteristicEntity(name="brand", value="samsung"))
+
+    other = _make_catalog_product(seller_id)
+    other.characteristics.clear()
+    other.characteristics.append(CharacteristicEntity(name="brand", value="xiaomi"))
+
+    response = await _get_catalog(
+        [apple, samsung, other],
+        params={"filters[brand]": ["apple", "samsung"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+    assert returned_ids == {str(apple.id), str(samsung.id)}
+    assert str(other.id) not in returned_ids
+
+
+@pytest.mark.asyncio
+async def test_catalog_multiple_characteristic_filters_are_anded(seller_id):
+    match = _make_catalog_product(seller_id)
+    match.characteristics.clear()
+    match.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+    match.characteristics.append(CharacteristicEntity(name="memory", value="256"))
+
+    no_memory = _make_catalog_product(seller_id)
+    no_memory.characteristics.clear()
+    no_memory.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+
+    response = await _get_catalog(
+        [match, no_memory],
+        params={"filters[brand]": "apple", "filters[memory]": "256"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["id"] for item in data["items"]] == [str(match.id)]

@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.v1.dependencies.auth import (
     get_current_seller_id,
@@ -27,6 +27,17 @@ from app.services.product_service import ProductService
 
 router = APIRouter(prefix="/products", tags=["Products"])
 public_router = APIRouter(prefix="/public/products", tags=["Public Catalog"])
+
+
+async def _parse_characteristic_filters(request: Request) -> dict[str, list[str]]:
+    """Parse deepObject query params: ?filters[brand]=apple&filters[brand]=samsung."""
+    filters: dict[str, list[str]] = {}
+    for key, value in request.query_params.multi_items():
+        if key.startswith("filters[") and key.endswith("]"):
+            char_name = key[8:-1]
+            if char_name:
+                filters.setdefault(char_name, []).append(value)
+    return filters
 
 
 def _public_product_response(product) -> ProductPublicResponse:
@@ -97,6 +108,7 @@ def _public_product_short_response(product) -> ProductPublicShortResponse:
 )
 async def list_catalog_products(
     _: None = Depends(require_b2c_service_key),
+    characteristic_filters: dict[str, list[str]] = Depends(_parse_characteristic_filters),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     category_id: UUID | None = None,
@@ -113,6 +125,7 @@ async def list_catalog_products(
         search=search,
         min_price=min_price,
         max_price=max_price,
+        characteristic_filters=characteristic_filters or None,
         sort=sort,
         limit=limit,
         offset=offset,

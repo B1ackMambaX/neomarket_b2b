@@ -23,6 +23,7 @@ class ProductModel(Base):
     deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blocking_reason_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    blocking_reason_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     moderator_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -38,5 +39,8 @@ class ProductModel(Base):
         back_populates="product", cascade="all, delete-orphan"
     )
     skus: Mapped[list["SkuModel"]] = relationship(  # type: ignore[name-defined]
+        back_populates="product", cascade="all, delete-orphan"
+    )
+    field_reports: Mapped[list["ProductFieldReportModel"]] = relationship(  # type: ignore[name-defined]
         back_populates="product", cascade="all, delete-orphan"
     )

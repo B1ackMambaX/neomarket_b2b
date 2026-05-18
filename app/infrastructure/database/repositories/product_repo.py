@@ -4,12 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities.product import CharacteristicEntity, ProductEntity, ProductImageEntity
+from app.domain.entities.product import CharacteristicEntity, FieldReportEntity, ProductEntity, ProductImageEntity
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.value_objects.product_status import ProductStatus
 from app.infrastructure.database.models.product import ProductModel
 from app.infrastructure.database.models.product_characteristic import ProductCharacteristicModel
+from app.infrastructure.database.models.product_field_report import ProductFieldReportModel
 from app.infrastructure.database.models.product_image import ProductImageModel
 
 
@@ -97,6 +98,20 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         await self._session.flush()
         return product
 
+    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
+        result = await self._session.execute(
+            select(ProductModel)
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+                selectinload(ProductModel.skus),
+                selectinload(ProductModel.field_reports),
+            )
+            .where(ProductModel.id == product_id)
+        )
+        model = result.scalar_one_or_none()
+        return self._to_entity(model, load_skus=True, load_reports=True) if model else None
+
     async def delete(self, product_id: UUID) -> None:
         result = await self._session.execute(select(ProductModel).where(ProductModel.id == product_id))
         model = result.scalar_one_or_none()
@@ -104,7 +119,14 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             await self._session.delete(model)
             await self._session.flush()
 
-    def _to_entity(self, model: ProductModel) -> ProductEntity:
+    def _to_entity(
+        self,
+        model: ProductModel,
+        load_skus: bool = False,
+        load_reports: bool = False,
+    ) -> ProductEntity:
+        from app.domain.entities.sku import SkuCharacteristicEntity, SkuEntity
+
         images = [
             ProductImageEntity(
                 id=img.id,
@@ -119,6 +141,38 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             CharacteristicEntity(id=c.id, name=c.name, value=c.value)
             for c in getattr(model, "characteristics", [])
         ]
+        skus = []
+        if load_skus:
+            skus = [
+                SkuEntity(
+                    id=s.id,
+                    product_id=s.product_id,
+                    name=s.name,
+                    price=s.price,
+                    cost_price=s.cost_price,
+                    discount=s.discount,
+                    active_quantity=s.active_quantity,
+                    reserved_quantity=s.reserved_quantity,
+                    article=s.article,
+                    image=s.image,
+                    is_active=s.is_active,
+                    created_at=s.created_at,
+                    updated_at=s.updated_at,
+                )
+                for s in getattr(model, "skus", [])
+            ]
+        field_reports = []
+        if load_reports:
+            field_reports = [
+                FieldReportEntity(
+                    id=r.id,
+                    product_id=r.product_id,
+                    field_name=r.field_name,
+                    sku_id=r.sku_id,
+                    comment=r.comment,
+                )
+                for r in getattr(model, "field_reports", [])
+            ]
         return ProductEntity(
             id=model.id,
             seller_id=model.seller_id,
@@ -130,13 +184,15 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             deleted=model.deleted,
             blocked=model.blocked,
             blocking_reason_id=model.blocking_reason_id,
+            blocking_reason_title=model.blocking_reason_title,
             moderator_comment=model.moderator_comment,
             created_at=model.created_at,
             updated_at=model.updated_at,
             moderated_at=model.moderated_at,
             images=images,
             characteristics=characteristics,
-            skus=[],
+            skus=skus,
+            field_reports=field_reports,
         )
 
     def _to_model(self, entity: ProductEntity) -> ProductModel:
@@ -151,6 +207,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             deleted=entity.deleted,
             blocked=entity.blocked,
             blocking_reason_id=entity.blocking_reason_id,
+            blocking_reason_title=entity.blocking_reason_title,
             moderator_comment=entity.moderator_comment,
             moderated_at=entity.moderated_at,
         )

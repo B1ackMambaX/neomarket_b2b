@@ -41,7 +41,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     first = errors[0] if errors else {}
     field = str(first.get("loc", ["unknown"])[-1])
     return JSONResponse(
-        status_code=400,
+        status_code=422,
         content={"code": "INVALID_REQUEST", "message": first.get("msg", "Validation error"), "field": field},
     )
 

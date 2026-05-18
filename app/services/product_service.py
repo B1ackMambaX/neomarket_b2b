@@ -1,8 +1,9 @@
 import re
 from uuid import UUID
 
+from app.domain.entities.category import CategoryEntity
 from app.domain.entities.product import CharacteristicEntity, ProductEntity, ProductImageEntity
-from app.domain.exceptions import ValidationException
+from app.domain.exceptions import NotFoundException, ValidationException
 from app.domain.repositories.category_repo import AbstractCategoryRepository
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.seller_repo import AbstractSellerRepository
@@ -52,3 +53,16 @@ class ProductService:
             )
 
         return await self._product_repo.save(product)
+
+    async def get_product(
+        self, seller_id: UUID | None, product_id: UUID
+    ) -> tuple[ProductEntity, CategoryEntity]:
+        product = await self._product_repo.get_with_skus_and_reports(product_id)
+        if product is None:
+            raise NotFoundException("Product not found")
+        if seller_id is not None and product.seller_id != seller_id:
+            raise NotFoundException("Product not found")
+        category = await self._category_repo.get_by_id(product.category_id)
+        if category is None:
+            category = CategoryEntity(id=product.category_id, name="")
+        return product, category

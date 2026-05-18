@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.product import CharacteristicInput, CharacteristicResponse
+from app.schemas.common import CharacteristicInput, CharacteristicResponse
 
 
 class SKUImageCreate(BaseModel):

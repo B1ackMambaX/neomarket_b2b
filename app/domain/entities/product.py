@@ -23,6 +23,15 @@ class CharacteristicEntity:
 
 
 @dataclass
+class FieldReportEntity:
+    product_id: UUID
+    field_name: str
+    comment: str
+    id: UUID = field(default_factory=uuid4)
+    sku_id: UUID | None = None
+
+
+@dataclass
 class ProductEntity:
     seller_id: UUID
     category_id: UUID
@@ -34,6 +43,7 @@ class ProductEntity:
     deleted: bool = False
     blocked: bool = False
     blocking_reason_id: UUID | None = None
+    blocking_reason_title: str | None = None
     moderator_comment: str | None = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
@@ -41,6 +51,7 @@ class ProductEntity:
     images: list[ProductImageEntity] = field(default_factory=list)
     characteristics: list[CharacteristicEntity] = field(default_factory=list)
     skus: list = field(default_factory=list)
+    field_reports: list[FieldReportEntity] = field(default_factory=list)
 
     @classmethod
     def create(

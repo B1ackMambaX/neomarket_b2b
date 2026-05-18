@@ -31,6 +31,9 @@ class AbstractProductRepository(ABC):
     ) -> list[ProductEntity]: ...
 
     @abstractmethod
+    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None: ...
+
+    @abstractmethod
     async def save(self, product: ProductEntity) -> ProductEntity: ...
 
     @abstractmethod

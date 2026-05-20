@@ -154,6 +154,17 @@ async def test_seller_id_taken_from_jwt(client, seller_id, valid_token):
 
 
 @pytest.mark.asyncio
+async def test_invalid_token_returns_401_contract_error(client):
+    response = await client.post(
+        "/api/v1/products",
+        json=_VALID_PAYLOAD,
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+    assert response.status_code == 401
+    assert response.json() == {"code": "UNAUTHORIZED", "message": "Invalid token"}
+
+
+@pytest.mark.asyncio
 async def test_missing_images_returns_400(client, valid_token):
     payload = {**_VALID_PAYLOAD, "images": []}
     response = await client.post(

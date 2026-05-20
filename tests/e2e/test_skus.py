@@ -233,6 +233,23 @@ async def test_first_sku_emits_created_event_to_moderation(seller_id, valid_toke
 
 
 @pytest.mark.asyncio
+async def test_invalid_token_returns_401_contract_error(_client_and_deps):
+    ac, _, _, _, product_repo = _client_and_deps
+    product = product_repo._product
+    assert product is not None
+
+    payload = {**_VALID_PAYLOAD, "product_id": str(product.id)}
+    response = await ac.post(
+        "/api/v1/skus",
+        json=payload,
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"code": "UNAUTHORIZED", "message": "Invalid token"}
+
+
+@pytest.mark.asyncio
 async def test_second_sku_no_state_change(seller_id, valid_token):
     from app.core.dependencies import get_sku_service
     from app.main import app

@@ -51,8 +51,8 @@ class SKUPublicResponse(BaseModel):
     name: str
     price: int
     discount: int
-    image: str | None
     stock_quantity: int
     active_quantity: int
     article: str | None
+    images: list[SKUImageResponse]
     characteristics: list[CharacteristicResponse]

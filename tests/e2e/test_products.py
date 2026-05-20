@@ -158,6 +158,17 @@ async def test_seller_id_taken_from_jwt(client, seller_id, valid_token):
 
 
 @pytest.mark.asyncio
+async def test_invalid_token_returns_401_contract_error(client):
+    response = await client.post(
+        "/api/v1/products",
+        json=_VALID_PAYLOAD,
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+    assert response.status_code == 401
+    assert response.json() == {"code": "UNAUTHORIZED", "message": "Invalid token"}
+
+
+@pytest.mark.asyncio
 async def test_missing_images_returns_400(client, valid_token):
     payload = {**_VALID_PAYLOAD, "images": []}
     response = await client.post(
@@ -422,7 +433,14 @@ async def test_get_product_via_service_key_bypasses_idor(valid_token):
     app.dependency_overrides.pop(get_product_service, None)
 
     assert response.status_code == 200
-    assert response.json()["id"] == str(product.id)
+    data = response.json()
+    assert data["id"] == str(product.id)
+    assert "deleted" not in data
+    assert "blocking_reason" not in data
+    assert "field_reports" not in data
+    sku = data["skus"][0]
+    assert "cost_price" not in sku
+    assert "reserved_quantity" not in sku
 
 
 @pytest.mark.asyncio

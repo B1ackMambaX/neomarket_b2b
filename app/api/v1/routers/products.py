@@ -64,10 +64,14 @@ def _public_product_response(product) -> ProductPublicResponse:
                 name=sku.name,
                 price=sku.price,
                 discount=sku.discount,
-                image=sku.image,
                 stock_quantity=sku.active_quantity + sku.reserved_quantity,
                 active_quantity=sku.active_quantity,
                 article=sku.article,
+                images=(
+                    [SKUImageResponse(id=uuid4(), url=sku.image, ordering=0)]
+                    if sku.image
+                    else []
+                ),
                 characteristics=[
                     CharacteristicResponse(id=c.id, name=c.name, value=c.value)
                     for c in sku.characteristics
@@ -198,17 +202,61 @@ async def create_product(
 
 @router.get(
     "/{product_id}",
-    response_model=ProductDetailResponse,
+    response_model=ProductDetailResponse | ProductPublicResponse,
     status_code=status.HTTP_200_OK,
-    summary="Карточка товара (seller — полная, X-Service-Key — без IDOR-проверки)",
+    summary="Карточка товара (seller — полная, X-Service-Key — без cost_price/reserved_quantity)",
     operation_id="getProduct",
 )
 async def get_product(
     product_id: UUID,
     seller_id: UUID | None = Depends(get_seller_id_or_service_key),
     service: ProductService = Depends(get_product_service),
-) -> ProductDetailResponse:
+) -> ProductDetailResponse | ProductPublicResponse:
     product, category = await service.get_product(seller_id=seller_id, product_id=product_id)
+
+    if seller_id is None:
+        public_skus = [
+            SKUPublicResponse(
+                id=sku.id,
+                product_id=sku.product_id,
+                name=sku.name,
+                price=sku.price,
+                discount=sku.discount,
+                stock_quantity=sku.active_quantity + sku.reserved_quantity,
+                active_quantity=sku.active_quantity,
+                article=sku.article,
+                images=(
+                    [SKUImageResponse(id=uuid4(), url=sku.image, ordering=0)]
+                    if sku.image
+                    else []
+                ),
+                characteristics=[
+                    CharacteristicResponse(id=c.id, name=c.name, value=c.value)
+                    for c in sku.characteristics
+                ],
+            )
+            for sku in product.skus
+        ]
+        return ProductPublicResponse(
+            id=product.id,
+            seller_id=product.seller_id,
+            category_id=product.category_id,
+            title=product.title,
+            slug=product.slug,
+            description=product.description,
+            status=product.status,
+            images=[
+                ProductImageResponse(id=img.id, url=img.url, ordering=img.ordering)
+                for img in product.images
+            ],
+            characteristics=[
+                CharacteristicResponse(id=c.id, name=c.name, value=c.value)
+                for c in product.characteristics
+            ],
+            skus=public_skus,
+            created_at=product.created_at,
+            updated_at=product.updated_at,
+        )
 
     blocking_reason = None
     if product.blocking_reason_id is not None:

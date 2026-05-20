@@ -43,3 +43,16 @@ class SKUResponse(BaseModel):
     characteristics: list[CharacteristicResponse]
     created_at: datetime
     updated_at: datetime
+
+
+class SKUPublicResponse(BaseModel):
+    id: UUID
+    product_id: UUID
+    name: str
+    price: int
+    discount: int
+    stock_quantity: int
+    active_quantity: int
+    article: str | None
+    images: list[SKUImageResponse]
+    characteristics: list[CharacteristicResponse]

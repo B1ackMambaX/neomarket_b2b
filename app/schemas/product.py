@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -33,6 +34,13 @@ class ProductCreate(BaseModel):
     slug: str | None = None
     images: list[ProductImageCreate] = Field(default_factory=list)
     characteristics: list[CharacteristicInput] = Field(default_factory=list)
+
+
+class ProductUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, min_length=1, max_length=5000)
+    category_id: UUID | None = None
+    characteristics: list[CharacteristicInput] | None = None
 
 
 class ProductResponse(BaseModel):
@@ -132,3 +140,21 @@ class ProductPublicPaginatedResponse(BaseModel):
 
 class ProductPublicBatchRequest(BaseModel):
     product_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class ModerationFieldReport(BaseModel):
+    field_name: str
+    sku_id: UUID | None = None
+    comment: str
+
+
+class ModerationEventRequest(BaseModel):
+    idempotency_key: UUID
+    product_id: UUID
+    event_type: Literal["MODERATED", "BLOCKED"]
+    moderator_id: UUID | None = None
+    moderator_comment: str | None = None
+    blocking_reason_id: UUID | None = None
+    hard_block: bool = False
+    field_reports: list[ModerationFieldReport] | None = None
+    occurred_at: datetime

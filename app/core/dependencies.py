@@ -10,6 +10,7 @@ from app.infrastructure.database.repositories.inventory_repo import SQLAlchemyIn
 from app.infrastructure.database.repositories.product_repo import SQLAlchemyProductRepository
 from app.infrastructure.database.repositories.seller_repo import SQLAlchemySellerRepository
 from app.infrastructure.database.repositories.sku_repo import SQLAlchemySkuRepository
+from app.infrastructure.external.http_b2c_event_publisher import HttpB2cEventPublisher
 from app.infrastructure.external.moderation_client import HttpModerationClient
 from app.infrastructure.external.noop_event_publisher import NoopEventPublisher
 from app.services.inventory_service import InventoryService
@@ -27,6 +28,10 @@ def get_product_service(db: AsyncSession = Depends(get_db)) -> ProductService:
         product_repo=SQLAlchemyProductRepository(db),
         seller_repo=SQLAlchemySellerRepository(db),
         category_repo=SQLAlchemyCategoryRepository(db),
+        event_publisher=HttpB2cEventPublisher(
+            url=settings.B2C_URL,
+            service_key=settings.B2B_TO_B2C_KEY,
+        ),
     )
 
 

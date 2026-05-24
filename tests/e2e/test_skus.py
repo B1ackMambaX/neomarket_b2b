@@ -87,6 +87,9 @@ class _StubProductRepo(AbstractProductRepository):
     async def delete(self, product_id: UUID) -> None:
         pass
 
+    async def mark_moderation_event_processed(self, idempotency_key: UUID) -> bool:
+        return True
+
 
 class _FakeModerationClient(AbstractModerationClient):
     def __init__(self):

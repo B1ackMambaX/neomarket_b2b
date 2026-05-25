@@ -65,6 +65,9 @@ class _StubProductRepo(AbstractProductRepository):
             raise NotFoundException("Product not found")
         return self._product
 
+    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
+        return self._product
+
     async def list_by_seller(self, seller_id, status=None, limit=20, offset=0):
         return []
 

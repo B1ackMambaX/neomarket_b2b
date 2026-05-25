@@ -1,9 +1,18 @@
+from __future__ import annotations
+
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.domain.value_objects.product_status import ProductStatus
+from app.schemas.common import CharacteristicInput, CharacteristicResponse
+from app.schemas.sku import SKUPublicResponse, SKUResponse
+
+__all__ = [
+    "CharacteristicInput",
+    "CharacteristicResponse",
+]
 
 
 class ProductImageCreate(BaseModel):
@@ -15,17 +24,6 @@ class ProductImageResponse(BaseModel):
     id: UUID
     url: str
     ordering: int
-
-
-class CharacteristicInput(BaseModel):
-    name: str
-    value: str
-
-
-class CharacteristicResponse(BaseModel):
-    id: UUID
-    name: str
-    value: str
 
 
 class ProductCreate(BaseModel):
@@ -50,6 +48,65 @@ class ProductResponse(BaseModel):
     moderator_comment: str | None
     images: list[ProductImageResponse]
     characteristics: list[CharacteristicResponse]
-    skus: list
+    skus: list[SKUResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+# --- GET /products/{id} response schemas ---
+
+
+class CategoryInProductResponse(BaseModel):
+    id: UUID
+    name: str
+
+
+class BlockingReasonInProductResponse(BaseModel):
+    id: UUID
+    title: str
+    comment: str | None
+
+
+class FieldReportResponse(BaseModel):
+    field_name: str
+    sku_id: UUID | None
+    comment: str
+
+
+class ProductDetailResponse(BaseModel):
+    # All fields from OpenAPI ProductResponse (required)
+    id: UUID
+    seller_id: UUID
+    category_id: UUID
+    title: str
+    slug: str | None
+    description: str | None
+    status: ProductStatus
+    deleted: bool
+    blocking_reason_id: UUID | None
+    moderator_comment: str | None
+    images: list[ProductImageResponse]
+    characteristics: list[CharacteristicResponse]
+    skus: list[SKUResponse]
+    created_at: datetime
+    updated_at: datetime
+    # Extra fields from flow / DoD (superset of OpenAPI)
+    blocked: bool
+    category: CategoryInProductResponse
+    blocking_reason: BlockingReasonInProductResponse | None
+    field_reports: list[FieldReportResponse]
+
+
+class ProductPublicResponse(BaseModel):
+    id: UUID
+    seller_id: UUID
+    category_id: UUID
+    title: str
+    slug: str | None
+    description: str | None
+    status: ProductStatus
+    images: list[ProductImageResponse]
+    characteristics: list[CharacteristicResponse]
+    skus: list[SKUPublicResponse]
     created_at: datetime
     updated_at: datetime

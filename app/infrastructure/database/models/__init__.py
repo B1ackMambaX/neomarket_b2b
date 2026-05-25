@@ -4,6 +4,7 @@ from app.infrastructure.database.models.product import ProductModel
 from app.infrastructure.database.models.product_image import ProductImageModel
 from app.infrastructure.database.models.product_characteristic import ProductCharacteristicModel
 from app.infrastructure.database.models.sku import SkuModel
+from app.infrastructure.database.models.product_field_report import ProductFieldReportModel
 from app.infrastructure.database.models.invoice import InvoiceModel, InvoiceItemModel
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "ProductImageModel",
     "ProductCharacteristicModel",
     "SkuModel",
+    "ProductFieldReportModel",
     "InvoiceModel",
     "InvoiceItemModel",
 ]

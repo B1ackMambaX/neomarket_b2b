@@ -1,17 +1,24 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.entities.product import CharacteristicEntity, FieldReportEntity, ProductEntity, ProductImageEntity
+from app.domain.entities.product import (
+    CharacteristicEntity,
+    FieldReportEntity,
+    ProductEntity,
+    ProductImageEntity,
+)
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.value_objects.product_status import ProductStatus
 from app.infrastructure.database.models.product import ProductModel
-from app.infrastructure.database.models.product_characteristic import ProductCharacteristicModel
-from app.infrastructure.database.models.product_field_report import ProductFieldReportModel
+from app.infrastructure.database.models.product_characteristic import (
+    ProductCharacteristicModel,
+)
 from app.infrastructure.database.models.product_image import ProductImageModel
+from app.infrastructure.database.models.sku import SkuModel
 
 
 class SQLAlchemyProductRepository(AbstractProductRepository):
@@ -45,7 +52,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
     ) -> list[ProductEntity]:
         query = (
             select(ProductModel)
-            .options(selectinload(ProductModel.images), selectinload(ProductModel.characteristics))
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+            )
             .where(ProductModel.seller_id == seller_id)
         )
         if status is not None:
@@ -62,7 +72,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
     ) -> list[ProductEntity]:
         result = await self._session.execute(
             select(ProductModel)
-            .options(selectinload(ProductModel.images), selectinload(ProductModel.characteristics))
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+            )
             .where(ProductModel.status == status.value)
             .limit(limit)
             .offset(offset)
@@ -110,10 +123,121 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             .where(ProductModel.id == product_id)
         )
         model = result.scalar_one_or_none()
-        return self._to_entity(model, load_skus=True, load_reports=True) if model else None
+        return (
+            self._to_entity(model, load_skus=True, load_reports=True) if model else None
+        )
+
+    async def list_catalog_visible(
+        self,
+        ids: list[UUID] | None = None,
+        category_id: UUID | None = None,
+        seller_id: UUID | None = None,
+        search: str | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
+        characteristic_filters: dict[str, list[str]] | None = None,
+        sort: str = "created_desc",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProductEntity], int]:
+        visible_sku = exists(
+            select(SkuModel.id).where(
+                SkuModel.product_id == ProductModel.id,
+                SkuModel.active_quantity > 0,
+            )
+        )
+        conditions = [
+            ProductModel.status == ProductStatus.MODERATED.value,
+            ProductModel.deleted.is_(False),
+            visible_sku,
+        ]
+        if ids:
+            conditions.append(ProductModel.id.in_(ids))
+        if category_id is not None:
+            conditions.append(ProductModel.category_id == category_id)
+        if seller_id is not None:
+            conditions.append(ProductModel.seller_id == seller_id)
+        if search:
+            search_like = f"%{search}%"
+            conditions.append(
+                ProductModel.title.ilike(search_like)
+                | ProductModel.description.ilike(search_like)
+            )
+        if min_price is not None:
+            conditions.append(
+                exists(
+                    select(SkuModel.id).where(
+                        SkuModel.product_id == ProductModel.id,
+                        SkuModel.active_quantity > 0,
+                        SkuModel.price >= min_price,
+                    )
+                )
+            )
+        if max_price is not None:
+            conditions.append(
+                exists(
+                    select(SkuModel.id).where(
+                        SkuModel.product_id == ProductModel.id,
+                        SkuModel.active_quantity > 0,
+                        SkuModel.price <= max_price,
+                    )
+                )
+            )
+        for char_name, char_values in (characteristic_filters or {}).items():
+            conditions.append(
+                exists(
+                    select(ProductCharacteristicModel.id).where(
+                        ProductCharacteristicModel.product_id == ProductModel.id,
+                        ProductCharacteristicModel.name == char_name,
+                        ProductCharacteristicModel.value.in_(char_values),
+                    )
+                )
+            )
+
+        count_result = await self._session.execute(
+            select(func.count()).select_from(ProductModel).where(*conditions)
+        )
+        total_count = count_result.scalar_one()
+
+        query = (
+            select(ProductModel)
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+                selectinload(ProductModel.skus),
+            )
+            .where(*conditions)
+        )
+        if sort == "price_asc":
+            query = query.order_by(
+                select(func.min(SkuModel.price))
+                .where(
+                    SkuModel.product_id == ProductModel.id, SkuModel.active_quantity > 0
+                )
+                .scalar_subquery()
+                .asc()
+            )
+        elif sort == "price_desc":
+            query = query.order_by(
+                select(func.min(SkuModel.price))
+                .where(
+                    SkuModel.product_id == ProductModel.id, SkuModel.active_quantity > 0
+                )
+                .scalar_subquery()
+                .desc()
+            )
+        else:
+            query = query.order_by(ProductModel.created_at.desc())
+
+        result = await self._session.execute(query.limit(limit).offset(offset))
+        return [
+            self._to_entity(m, load_skus=True) for m in result.scalars().all()
+        ], total_count
 
     async def delete(self, product_id: UUID) -> None:
-        result = await self._session.execute(select(ProductModel).where(ProductModel.id == product_id))
+        result = await self._session.execute(
+            select(ProductModel).where(ProductModel.id == product_id)
+        )
         model = result.scalar_one_or_none()
         if model:
             await self._session.delete(model)

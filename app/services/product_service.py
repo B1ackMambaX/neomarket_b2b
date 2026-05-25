@@ -66,3 +66,36 @@ class ProductService:
         if category is None:
             category = CategoryEntity(id=product.category_id, name="")
         return product, category
+
+    async def list_catalog_products(
+        self,
+        ids: list[UUID] | None = None,
+        category_id: UUID | None = None,
+        seller_id: UUID | None = None,
+        search: str | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
+        characteristic_filters: dict[str, list[str]] | None = None,
+        sort: str = "created_desc",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[tuple[ProductEntity, CategoryEntity]], int]:
+        products, total_count = await self._product_repo.list_catalog_visible(
+            ids=ids,
+            category_id=category_id,
+            seller_id=seller_id,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            characteristic_filters=characteristic_filters,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+        result = []
+        for product in products:
+            category = await self._category_repo.get_by_id(product.category_id)
+            if category is None:
+                category = CategoryEntity(id=product.category_id, name="")
+            result.append((product, category))
+        return result, total_count

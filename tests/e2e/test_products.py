@@ -36,6 +36,10 @@ class _StubProductRepo(AbstractProductRepository):
     async def get_with_skus_and_reports(self, product_id): return None
     async def list_by_seller(self, seller_id, status=None, limit=20, offset=0): return []
     async def list_by_status(self, status, limit=20, offset=0): return []
+    async def list_catalog_visible(
+        self, ids=None, category_id=None, seller_id=None, search=None, min_price=None, max_price=None,
+        sort="created_desc", limit=20, offset=0
+    ): return [], 0
     async def save(self, product: ProductEntity) -> ProductEntity: return product
     async def delete(self, product_id): pass
 
@@ -296,6 +300,10 @@ class _DetailProductRepo(AbstractProductRepository):
         return None
     async def list_by_seller(self, seller_id, status=None, limit=20, offset=0): return []
     async def list_by_status(self, status, limit=20, offset=0): return []
+    async def list_catalog_visible(
+        self, ids=None, category_id=None, seller_id=None, search=None, min_price=None, max_price=None,
+        sort="created_desc", limit=20, offset=0
+    ): return [], 0
     async def save(self, product): return product
     async def delete(self, product_id): pass
 
@@ -453,3 +461,270 @@ async def test_get_nonexistent_product_returns_404(seller_id, valid_token):
 
     assert response.status_code == 404
     assert response.json()["code"] == "NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/public/products — DoD tests (B2B-7 catalog for B2C)
+# ---------------------------------------------------------------------------
+
+
+class _CatalogProductRepo(AbstractProductRepository):
+    def __init__(self, products: list[ProductEntity]):
+        self._products = products
+
+    async def get_by_id(self, product_id): return None
+    async def get_or_raise(self, product_id): raise NotImplementedError
+    async def get_with_skus_and_reports(self, product_id): return None
+    async def list_by_seller(self, seller_id, status=None, limit=20, offset=0): return []
+    async def list_by_status(self, status, limit=20, offset=0): return []
+
+    async def list_catalog_visible(
+        self,
+        ids=None,
+        category_id=None,
+        seller_id=None,
+        search=None,
+        min_price=None,
+        max_price=None,
+        characteristic_filters=None,
+        sort="created_desc",
+        limit=20,
+        offset=0,
+    ):
+        selected = []
+        ids_set = set(ids or [])
+        for product in self._products:
+            if ids is not None and product.id not in ids_set:
+                continue
+            if category_id is not None and product.category_id != category_id:
+                continue
+            if seller_id is not None and product.seller_id != seller_id:
+                continue
+            if product.status != ProductStatus.MODERATED:
+                continue
+            if product.deleted:
+                continue
+            if not any(sku.active_quantity > 0 for sku in product.skus):
+                continue
+            if min_price is not None and not any(
+                sku.active_quantity > 0 and sku.price >= min_price for sku in product.skus
+            ):
+                continue
+            if max_price is not None and not any(
+                sku.active_quantity > 0 and sku.price <= max_price for sku in product.skus
+            ):
+                continue
+            if characteristic_filters:
+                char_map: dict[str, list[str]] = {}
+                for c in product.characteristics:
+                    char_map.setdefault(c.name, []).append(c.value)
+                if not all(
+                    any(v in char_map.get(name, []) for v in values)
+                    for name, values in characteristic_filters.items()
+                ):
+                    continue
+            selected.append(product)
+        total_count = len(selected)
+        return selected[offset : offset + limit], total_count
+
+    async def save(self, product): return product
+    async def delete(self, product_id): pass
+
+
+def _make_catalog_product(
+    seller_id: UUID,
+    *,
+    status: ProductStatus = ProductStatus.MODERATED,
+    deleted: bool = False,
+    active_quantity: int = 10,
+) -> ProductEntity:
+    product = ProductEntity(
+        id=uuid4(),
+        seller_id=seller_id,
+        category_id=uuid4(),
+        title="Catalog Product",
+        description="Visible to buyers",
+        slug="catalog-product",
+        status=status,
+        deleted=deleted,
+        blocked=status in {ProductStatus.BLOCKED, ProductStatus.HARD_BLOCKED},
+    )
+    product.images.append(
+        ProductImageEntity(product_id=product.id, url="https://cdn.example.com/catalog.jpg", ordering=0)
+    )
+    product.characteristics.append(CharacteristicEntity(name="Brand", value="Neo"))
+    product.skus.append(
+        SkuEntity(
+            product_id=product.id,
+            name="Default",
+            price=10000,
+            cost_price=5000,
+            discount=0,
+            active_quantity=active_quantity,
+            reserved_quantity=3,
+            image="https://cdn.example.com/sku.jpg",
+        )
+    )
+    return product
+
+
+def _make_catalog_service(products: list[ProductEntity]) -> ProductService:
+    categories = {
+        product.category_id: CategoryEntity(id=product.category_id, name="Catalog")
+        for product in products
+    }
+
+    class _CategoryRepo(AbstractCategoryRepository):
+        async def get_by_id(self, cid):
+            return categories.get(cid)
+        async def get_or_raise(self, cid):
+            return categories[cid]
+
+    seller_id = products[0].seller_id if products else uuid4()
+    return ProductService(
+        product_repo=_CatalogProductRepo(products),
+        seller_repo=_StubSellerRepo(seller_id),
+        category_repo=_CategoryRepo(),
+    )
+
+
+async def _get_catalog(products: list[ProductEntity], *, headers=None, params=None):
+    from app.core.dependencies import get_product_service
+    from app.main import app
+
+    app.dependency_overrides[get_product_service] = lambda: _make_catalog_service(products)
+    transport = ASGITransport(app=app)
+    request_headers = {"X-Service-Key": settings.B2C_TO_B2B_KEY} if headers is None else headers
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(
+            "/api/v1/public/products",
+            headers=request_headers,
+            params=params,
+        )
+    app.dependency_overrides.pop(get_product_service, None)
+    return response
+
+
+@pytest.mark.asyncio
+async def test_catalog_returns_moderated_in_stock_products(seller_id):
+    visible = _make_catalog_product(seller_id)
+    created = _make_catalog_product(seller_id, status=ProductStatus.CREATED)
+    deleted = _make_catalog_product(seller_id, deleted=True)
+    out_of_stock = _make_catalog_product(seller_id, active_quantity=0)
+
+    response = await _get_catalog([visible, created, deleted, out_of_stock])
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 1
+    assert [item["id"] for item in data["items"]] == [str(visible.id)]
+    assert data["items"][0]["min_price"] == 10000
+
+
+@pytest.mark.asyncio
+async def test_catalog_excludes_hard_blocked(seller_id):
+    visible = _make_catalog_product(seller_id)
+    hard_blocked = _make_catalog_product(seller_id, status=ProductStatus.HARD_BLOCKED)
+
+    response = await _get_catalog([visible, hard_blocked])
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [str(visible.id)]
+
+
+@pytest.mark.asyncio
+async def test_catalog_missing_service_key_returns_401(seller_id):
+    visible = _make_catalog_product(seller_id)
+
+    response = await _get_catalog([visible], headers={})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_catalog_response_has_no_cost_price(seller_id):
+    visible = _make_catalog_product(seller_id)
+
+    response = await _post_catalog_batch([visible], [visible.id])
+
+    assert response.status_code == 200
+    sku = response.json()[0]["skus"][0]
+    assert "cost_price" not in sku
+    assert "reserved_quantity" not in sku
+
+
+@pytest.mark.asyncio
+async def test_batch_ids_returns_visible_subset(seller_id):
+    visible = _make_catalog_product(seller_id)
+    hidden = _make_catalog_product(seller_id, status=ProductStatus.HARD_BLOCKED)
+    missing_id = uuid4()
+
+    response = await _post_catalog_batch([visible, hidden], [visible.id, hidden.id, missing_id])
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["id"] for item in data] == [str(visible.id)]
+
+
+async def _post_catalog_batch(products: list[ProductEntity], product_ids: list[UUID], *, headers=None):
+    from app.core.dependencies import get_product_service
+    from app.main import app
+
+    app.dependency_overrides[get_product_service] = lambda: _make_catalog_service(products)
+    transport = ASGITransport(app=app)
+    request_headers = {"X-Service-Key": settings.B2C_TO_B2B_KEY} if headers is None else headers
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/public/products/batch",
+            headers=request_headers,
+            json={"product_ids": [str(product_id) for product_id in product_ids]},
+        )
+    app.dependency_overrides.pop(get_product_service, None)
+    return response
+
+
+@pytest.mark.asyncio
+async def test_catalog_characteristic_filter_returns_matching_products(seller_id):
+    apple = _make_catalog_product(seller_id)
+    apple.characteristics.clear()
+    apple.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+
+    samsung = _make_catalog_product(seller_id)
+    samsung.characteristics.clear()
+    samsung.characteristics.append(CharacteristicEntity(name="brand", value="samsung"))
+
+    other = _make_catalog_product(seller_id)
+    other.characteristics.clear()
+    other.characteristics.append(CharacteristicEntity(name="brand", value="xiaomi"))
+
+    response = await _get_catalog(
+        [apple, samsung, other],
+        params={"filters[brand]": ["apple", "samsung"]},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {item["id"] for item in data["items"]}
+    assert returned_ids == {str(apple.id), str(samsung.id)}
+    assert str(other.id) not in returned_ids
+
+
+@pytest.mark.asyncio
+async def test_catalog_multiple_characteristic_filters_are_anded(seller_id):
+    match = _make_catalog_product(seller_id)
+    match.characteristics.clear()
+    match.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+    match.characteristics.append(CharacteristicEntity(name="memory", value="256"))
+
+    no_memory = _make_catalog_product(seller_id)
+    no_memory.characteristics.clear()
+    no_memory.characteristics.append(CharacteristicEntity(name="brand", value="apple"))
+
+    response = await _get_catalog(
+        [match, no_memory],
+        params={"filters[brand]": "apple", "filters[memory]": "256"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["id"] for item in data["items"]] == [str(match.id)]

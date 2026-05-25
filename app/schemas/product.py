@@ -110,3 +110,25 @@ class ProductPublicResponse(BaseModel):
     skus: list[SKUPublicResponse]
     created_at: datetime
     updated_at: datetime
+
+
+class ProductPublicShortResponse(BaseModel):
+    id: UUID
+    title: str
+    slug: str | None
+    status: ProductStatus
+    category_id: UUID
+    min_price: int | None
+    cover_image: str | None
+    created_at: datetime
+
+
+class ProductPublicPaginatedResponse(BaseModel):
+    items: list[ProductPublicShortResponse]
+    total_count: int
+    limit: int
+    offset: int
+
+
+class ProductPublicBatchRequest(BaseModel):
+    product_ids: list[UUID] = Field(min_length=1, max_length=100)

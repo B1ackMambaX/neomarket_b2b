@@ -74,6 +74,12 @@ class _StubProductRepo(AbstractProductRepository):
     async def list_by_status(self, status, limit=20, offset=0):
         return []
 
+    async def list_catalog_visible(
+        self, ids=None, category_id=None, seller_id=None, search=None, min_price=None, max_price=None,
+        sort="created_desc", limit=20, offset=0
+    ):
+        return [], 0
+
     async def save(self, product: ProductEntity) -> ProductEntity:
         self.saved.append(product)
         return product

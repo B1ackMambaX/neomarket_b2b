@@ -42,6 +42,7 @@ class _StubProductRepo(AbstractProductRepository):
     ): return [], 0
     async def save(self, product: ProductEntity) -> ProductEntity: return product
     async def delete(self, product_id): pass
+    async def mark_moderation_event_processed(self, idempotency_key): return True
 
 
 class _StubSellerRepo(AbstractSellerRepository):
@@ -306,6 +307,7 @@ class _DetailProductRepo(AbstractProductRepository):
     ): return [], 0
     async def save(self, product): return product
     async def delete(self, product_id): pass
+    async def mark_moderation_event_processed(self, idempotency_key): return True
 
 
 def _make_detail_service(seller_id: UUID, product: ProductEntity | None) -> ProductService:
@@ -529,6 +531,7 @@ class _CatalogProductRepo(AbstractProductRepository):
 
     async def save(self, product): return product
     async def delete(self, product_id): pass
+    async def mark_moderation_event_processed(self, idempotency_key): return True
 
 
 def _make_catalog_product(

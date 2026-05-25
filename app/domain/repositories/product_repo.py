@@ -53,3 +53,6 @@ class AbstractProductRepository(ABC):
 
     @abstractmethod
     async def delete(self, product_id: UUID) -> None: ...
+
+    @abstractmethod
+    async def mark_moderation_event_processed(self, idempotency_key: UUID) -> bool: ...

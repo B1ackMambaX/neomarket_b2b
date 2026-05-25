@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import delete, exists, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +19,9 @@ from app.infrastructure.database.models.product import ProductModel
 from app.infrastructure.database.models.product_characteristic import (
     ProductCharacteristicModel,
 )
+from app.infrastructure.database.models.moderation_event import ModerationEventModel
 from app.infrastructure.database.models.product_image import ProductImageModel
+from app.infrastructure.database.models.product_field_report import ProductFieldReportModel
 from app.infrastructure.database.models.sku import SkuModel
 
 
@@ -108,8 +112,46 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             )
             await self._session.merge(char_model)
 
+        await self._session.execute(
+            delete(ProductFieldReportModel).where(ProductFieldReportModel.product_id == product.id)
+        )
+        for report in product.field_reports:
+            report_model = ProductFieldReportModel(
+                id=report.id,
+                product_id=product.id,
+                field_name=report.field_name,
+                sku_id=report.sku_id,
+                comment=report.comment,
+            )
+            await self._session.merge(report_model)
+
         await self._session.flush()
         return product
+
+    async def mark_moderation_event_processed(self, idempotency_key: UUID) -> bool:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        result = await self._session.execute(
+            select(ModerationEventModel).where(
+                ModerationEventModel.sender_service == "moderation",
+                ModerationEventModel.idempotency_key == idempotency_key,
+                ModerationEventModel.processed_at > cutoff,
+            )
+        )
+        if result.scalar_one_or_none() is not None:
+            return False
+
+        try:
+            async with self._session.begin_nested():
+                self._session.add(
+                    ModerationEventModel(
+                        sender_service="moderation",
+                        idempotency_key=idempotency_key,
+                    )
+                )
+                await self._session.flush()
+        except IntegrityError:
+            return False
+        return True
 
     async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
         result = await self._session.execute(

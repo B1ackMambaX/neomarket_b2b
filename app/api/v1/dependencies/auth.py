@@ -51,3 +51,9 @@ async def require_b2c_service_key(request: Request) -> None:
     x_service_key = request.headers.get("X-Service-Key") or ""
     if not secrets.compare_digest(x_service_key, settings.B2C_TO_B2B_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service key")
+
+
+async def require_moderation_service_key(request: Request) -> None:
+    x_service_key = request.headers.get("X-Service-Key") or ""
+    if not secrets.compare_digest(x_service_key, settings.B2B_TO_MOD_KEY):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service key")

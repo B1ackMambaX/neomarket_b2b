@@ -16,6 +16,7 @@ from app.schemas.product import (
     ProductCreate,
     ProductDetailResponse,
     ProductImageResponse,
+    ProductUpdate,
     ProductPublicBatchRequest,
     ProductPublicPaginatedResponse,
     ProductPublicResponse,
@@ -103,6 +104,32 @@ def _public_product_short_response(product) -> ProductPublicShortResponse:
     )
 
 
+def _product_response(product) -> ProductResponse:
+    return ProductResponse(
+        id=product.id,
+        seller_id=product.seller_id,
+        category_id=product.category_id,
+        title=product.title,
+        slug=product.slug,
+        description=product.description,
+        status=product.status,
+        deleted=product.deleted,
+        blocking_reason_id=product.blocking_reason_id,
+        moderator_comment=product.moderator_comment,
+        images=[
+            ProductImageResponse(id=img.id, url=img.url, ordering=img.ordering)
+            for img in product.images
+        ],
+        characteristics=[
+            CharacteristicResponse(id=c.id, name=c.name, value=c.value)
+            for c in product.characteristics
+        ],
+        skus=[],
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
+
+
 @public_router.get(
     "",
     response_model=ProductPublicPaginatedResponse,
@@ -175,29 +202,54 @@ async def create_product(
     service: ProductService = Depends(get_product_service),
 ) -> ProductResponse:
     product = await service.create_product(seller_id=seller_id, payload=payload)
-    return ProductResponse(
-        id=product.id,
-        seller_id=product.seller_id,
-        category_id=product.category_id,
-        title=product.title,
-        slug=product.slug,
-        description=product.description,
-        status=product.status,
-        deleted=product.deleted,
-        blocking_reason_id=product.blocking_reason_id,
-        moderator_comment=product.moderator_comment,
-        images=[
-            ProductImageResponse(id=img.id, url=img.url, ordering=img.ordering)
-            for img in product.images
-        ],
-        characteristics=[
-            CharacteristicResponse(id=c.id, name=c.name, value=c.value)
-            for c in product.characteristics
-        ],
-        skus=[],
-        created_at=product.created_at,
-        updated_at=product.updated_at,
-    )
+    return _product_response(product)
+
+
+@router.patch(
+    "/{product_id}",
+    response_model=ProductResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Редактирование товара",
+    operation_id="updateProduct",
+)
+async def update_product(
+    product_id: UUID,
+    payload: ProductUpdate,
+    seller_id: UUID = Depends(get_current_seller_id),
+    service: ProductService = Depends(get_product_service),
+) -> ProductResponse:
+    product = await service.update_product(seller_id=seller_id, product_id=product_id, payload=payload)
+    return _product_response(product)
+
+
+@router.put(
+    "/{product_id}",
+    response_model=ProductResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def replace_product(
+    product_id: UUID,
+    payload: ProductUpdate,
+    seller_id: UUID = Depends(get_current_seller_id),
+    service: ProductService = Depends(get_product_service),
+) -> ProductResponse:
+    product = await service.update_product(seller_id=seller_id, product_id=product_id, payload=payload)
+    return _product_response(product)
+
+
+@router.delete(
+    "/{product_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Мягкое удаление товара",
+    operation_id="deleteProduct",
+)
+async def delete_product(
+    product_id: UUID,
+    seller_id: UUID = Depends(get_current_seller_id),
+    service: ProductService = Depends(get_product_service),
+) -> None:
+    await service.delete_product(seller_id=seller_id, product_id=product_id)
 
 
 @router.get(

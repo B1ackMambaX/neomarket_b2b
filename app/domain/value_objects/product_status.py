@@ -2,8 +2,8 @@ from enum import Enum
 
 
 class ProductStatus(str, Enum):
-    DRAFT = "DRAFT"
+    CREATED = "CREATED"
     ON_MODERATION = "ON_MODERATION"
     MODERATED = "MODERATED"
     BLOCKED = "BLOCKED"
-    REJECTED = "REJECTED"
+    HARD_BLOCKED = "HARD_BLOCKED"

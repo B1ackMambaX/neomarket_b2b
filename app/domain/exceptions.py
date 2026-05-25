@@ -7,7 +7,7 @@ class NotFoundException(DomainException):
 
 
 class ValidationException(DomainException):
-    code = "VALIDATION_ERROR"
+    code = "INVALID_REQUEST"
 
 
 class PermissionDeniedException(DomainException):

@@ -1,9 +1,14 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api.middleware.error_handler import domain_exception_handler
+from app.api.middleware.error_handler import (
+    domain_exception_handler,
+    http_exception_handler,
+)
 from app.core.config import ALLOWED_ORIGINS, settings
 from app.core.database import engine
 from app.domain.exceptions import DomainException
@@ -31,8 +36,27 @@ app.add_middleware(
 )
 
 app.add_exception_handler(DomainException, domain_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
 
-from app.api.v1.routers.products import router as products_router
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    field = str(first.get("loc", ["unknown"])[-1])
+    return JSONResponse(
+        status_code=400,
+        content={
+            "code": "INVALID_REQUEST",
+            "message": first.get("msg", "Validation error"),
+            "field": field,
+        },
+    )
+
+
+from app.api.v1.routers.products import router as products_router  # noqa: E402
 
 app.include_router(products_router, prefix="/api/v1")
 

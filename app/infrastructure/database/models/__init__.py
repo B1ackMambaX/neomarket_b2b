@@ -6,6 +6,7 @@ from app.infrastructure.database.models.product_characteristic import ProductCha
 from app.infrastructure.database.models.sku import SkuModel
 from app.infrastructure.database.models.product_field_report import ProductFieldReportModel
 from app.infrastructure.database.models.invoice import InvoiceModel, InvoiceItemModel
+from app.infrastructure.database.models.reservation import ReserveOperationModel, UnreserveOperationModel
 
 __all__ = [
     "SellerModel",
@@ -17,4 +18,6 @@ __all__ = [
     "ProductFieldReportModel",
     "InvoiceModel",
     "InvoiceItemModel",
+    "ReserveOperationModel",
+    "UnreserveOperationModel",
 ]

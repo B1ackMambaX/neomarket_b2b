@@ -16,3 +16,11 @@ class PermissionDeniedException(DomainException):
 
 class ForbiddenException(DomainException):
     code = "FORBIDDEN"
+
+
+class InsufficientStockException(DomainException):
+    code = "INSUFFICIENT_STOCK"
+
+    def __init__(self, failed_items: list[dict]) -> None:
+        self.failed_items = failed_items
+        super().__init__("Insufficient stock for one or more SKUs")

@@ -8,9 +8,13 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select, text
 
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory, engine
 from app.core.security import create_access_token
+from app.infrastructure.database.models import ProductModel, SellerModel, SkuImageModel, SkuModel
+from app.infrastructure.database.models.base import Base
 from app.domain.entities.product import ProductEntity
 from app.domain.entities.sku import SkuEntity
 from app.domain.exceptions import NotFoundException
@@ -58,6 +62,9 @@ class _StubProductRepo(AbstractProductRepository):
         self.saved: list[ProductEntity] = []
 
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None:
+        return self._product
+
+    async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:
         return self._product
 
     async def get_or_raise(self, product_id: UUID) -> ProductEntity:
@@ -173,6 +180,22 @@ async def _client_and_deps(seller_id):
     app.dependency_overrides.pop(get_sku_service, None)
 
 
+@pytest_asyncio.fixture
+async def real_db_schema():
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("select 1"))
+    except Exception as exc:
+        pytest.skip(f"real database is not available: {exc}")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -202,6 +225,8 @@ async def test_first_sku_transitions_product_to_on_moderation(seller_id, valid_t
     # product was saved after status transition
     assert len(product_repo.saved) == 1
     assert product_repo.saved[0].status == ProductStatus.ON_MODERATION
+    assert len(sku_repo.saved[0].images) == 1
+    assert sku_repo.saved[0].images[0].url == "https://cdn.example.com/sku.jpg"
 
 
 @pytest.mark.asyncio
@@ -325,3 +350,133 @@ async def test_missing_image_returns_400(seller_id, valid_token):
 
     assert response.status_code == 400
     assert "image" in response.json().get("message", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_other_seller_product_returns_not_owner(seller_id, valid_token):
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(uuid4())
+    service, _, _, _ = _make_service(seller_id, product=product)
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        payload = {**_VALID_PAYLOAD, "product_id": str(product.id)}
+        response = await ac.post(
+            "/api/v1/skus",
+            json=payload,
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_OWNER"
+
+
+@pytest.mark.asyncio
+async def test_create_sku_response_preserves_all_images(seller_id, valid_token):
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.ON_MODERATION)
+    service, _, _, _ = _make_service(seller_id, product=product, existing_sku_count=1)
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        payload = {
+            **_VALID_PAYLOAD,
+            "product_id": str(product.id),
+            "images": [
+                {"url": "https://cdn.example.com/first.jpg", "ordering": 1},
+                {"url": "https://cdn.example.com/cover.jpg", "ordering": 0},
+            ],
+        }
+        response = await ac.post(
+            "/api/v1/skus",
+            json=payload,
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert [image["url"] for image in body["images"]] == [
+        "https://cdn.example.com/cover.jpg",
+        "https://cdn.example.com/first.jpg",
+    ]
+    assert all(image["id"] for image in body["images"])
+
+
+@pytest.mark.asyncio
+async def test_create_sku_persists_real_orm_path(real_db_schema, seller_id, valid_token):
+    from app.core.dependencies import get_moderation_client
+    from app.main import app
+
+    product_id = uuid4()
+    category_id = uuid4()
+    mod_client = _FakeModerationClient()
+
+    async with AsyncSessionFactory() as session:
+        session.add(
+            SellerModel(
+                id=seller_id,
+                company_name="Seller",
+                inn="123456789012",
+                status="ACTIVE",
+            )
+        )
+        session.add(
+            ProductModel(
+                id=product_id,
+                seller_id=seller_id,
+                category_id=category_id,
+                title="Real ORM Product",
+                slug="real-orm-product",
+                status=ProductStatus.CREATED.value,
+            )
+        )
+        await session.commit()
+
+    app.dependency_overrides[get_moderation_client] = lambda: mod_client
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/skus",
+            json={
+                **_VALID_PAYLOAD,
+                "product_id": str(product_id),
+                "images": [
+                    {"url": "https://cdn.example.com/one.jpg", "ordering": 0},
+                    {"url": "https://cdn.example.com/two.jpg", "ordering": 1},
+                ],
+            },
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    app.dependency_overrides.pop(get_moderation_client, None)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert [image["url"] for image in body["images"]] == [
+        "https://cdn.example.com/one.jpg",
+        "https://cdn.example.com/two.jpg",
+    ]
+
+    async with AsyncSessionFactory() as session:
+        sku = await session.get(SkuModel, UUID(body["id"]))
+        product = await session.get(ProductModel, product_id)
+        images = (
+            await session.execute(
+                select(SkuImageModel)
+                .where(SkuImageModel.sku_id == UUID(body["id"]))
+                .order_by(SkuImageModel.ordering)
+            )
+        ).scalars().all()
+
+    assert sku is not None
+    assert product is not None
+    assert product.status == ProductStatus.ON_MODERATION.value
+    assert [image.url for image in images] == [
+        "https://cdn.example.com/one.jpg",
+        "https://cdn.example.com/two.jpg",
+    ]

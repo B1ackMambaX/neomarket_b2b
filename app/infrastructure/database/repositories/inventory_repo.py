@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.inventory import ReservationItemResult, ReservationResult
-from app.domain.exceptions import InsufficientStockException
+from app.domain.exceptions import FailedStockItem, InsufficientStockException
 from app.domain.repositories.inventory_repo import AbstractInventoryRepository
 from app.infrastructure.database.models.reservation import ReserveOperationModel, UnreserveOperationModel
 from app.infrastructure.database.models.sku import SkuModel
@@ -48,7 +48,7 @@ class SQLAlchemyInventoryRepository(AbstractInventoryRepository):
         )
         sku_map = {sku.id: sku for sku in rows.scalars().all()}
 
-        failed: list[dict] = []
+        failed: list[FailedStockItem] = []
         for sku_id, qty in items:
             sku = sku_map.get(sku_id)
             available = sku.active_quantity if sku else 0

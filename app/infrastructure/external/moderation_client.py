@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from uuid import UUID, uuid4
+from uuid import UUID, NAMESPACE_URL, uuid5
 
 from app.domain.entities.product import ProductEntity
 
@@ -24,7 +24,7 @@ class HttpModerationClient(AbstractModerationClient):
 
             payload = {
                 "event_type": "PRODUCT_CREATED",
-                "idempotency_key": str(uuid4()),
+                "idempotency_key": str(uuid5(NAMESPACE_URL, f"{product.id}:PRODUCT_CREATED")),
                 "occurred_at": datetime.utcnow().isoformat() + "Z",
                 "payload": {
                     "product_id": str(product.id),

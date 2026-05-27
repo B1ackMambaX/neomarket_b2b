@@ -1,14 +1,23 @@
-from uuid import UUID, uuid4
+from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
 from app.api.v1.dependencies.auth import get_current_seller_id
 from app.core.dependencies import get_sku_service
+from app.domain.entities.sku import SkuEntity
 from app.schemas.product import CharacteristicResponse
 from app.schemas.sku import SKUCreate, SKUImageResponse, SKUResponse
 from app.services.sku_service import SkuService
 
 router = APIRouter(prefix="/skus", tags=["SKUs"])
+
+
+def _sku_image_responses(sku: SkuEntity) -> list[SKUImageResponse]:
+    return [
+        SKUImageResponse(id=image.id, url=image.url, ordering=image.ordering)
+        for image in sorted(sku.images, key=lambda image: image.ordering)
+    ]
 
 
 @router.post(
@@ -20,15 +29,10 @@ router = APIRouter(prefix="/skus", tags=["SKUs"])
 )
 async def create_sku(
     payload: SKUCreate,
-    seller_id: UUID = Depends(get_current_seller_id),
-    service: SkuService = Depends(get_sku_service),
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[SkuService, Depends(get_sku_service)],
 ) -> SKUResponse:
     sku = await service.create_sku(seller_id=seller_id, payload=payload)
-    images = (
-        [SKUImageResponse(id=uuid4(), url=sku.image, ordering=0)]
-        if sku.image
-        else []
-    )
     return SKUResponse(
         id=sku.id,
         product_id=sku.product_id,
@@ -40,7 +44,7 @@ async def create_sku(
         active_quantity=sku.active_quantity,
         reserved_quantity=sku.reserved_quantity,
         article=sku.article,
-        images=images,
+        images=_sku_image_responses(sku),
         characteristics=[
             CharacteristicResponse(id=c.id, name=c.name, value=c.value)
             for c in sku.characteristics

@@ -12,6 +12,7 @@ from app.domain.entities.product import (
     ProductEntity,
     ProductImageEntity,
 )
+from app.domain.entities.sku import SkuImageEntity
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.value_objects.product_status import ProductStatus
@@ -37,6 +38,19 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                 selectinload(ProductModel.characteristics),
             )
             .where(ProductModel.id == product_id)
+        )
+        model = result.scalar_one_or_none()
+        return self._to_entity(model) if model else None
+
+    async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:
+        result = await self._session.execute(
+            select(ProductModel)
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+            )
+            .where(ProductModel.id == product_id)
+            .with_for_update()
         )
         model = result.scalar_one_or_none()
         return self._to_entity(model) if model else None
@@ -159,7 +173,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             .options(
                 selectinload(ProductModel.images),
                 selectinload(ProductModel.characteristics),
-                selectinload(ProductModel.skus),
+                selectinload(ProductModel.skus).selectinload(SkuModel.images),
                 selectinload(ProductModel.field_reports),
             )
             .where(ProductModel.id == product_id)
@@ -246,7 +260,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             .options(
                 selectinload(ProductModel.images),
                 selectinload(ProductModel.characteristics),
-                selectinload(ProductModel.skus),
+                selectinload(ProductModel.skus).selectinload(SkuModel.images),
             )
             .where(*conditions)
         )
@@ -320,7 +334,17 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                     active_quantity=s.active_quantity,
                     reserved_quantity=s.reserved_quantity,
                     article=s.article,
-                    image=s.image,
+                    images=[
+                        SkuImageEntity(
+                            id=image.id,
+                            url=image.url,
+                            ordering=image.ordering,
+                            created_at=image.created_at,
+                        )
+                        for image in getattr(s, "images", [])
+                    ] or (
+                        [SkuImageEntity(url=s.image, ordering=0)] if s.image else []
+                    ),
                     is_active=s.is_active,
                     created_at=s.created_at,
                     updated_at=s.updated_at,

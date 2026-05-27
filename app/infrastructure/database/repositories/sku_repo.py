@@ -1,12 +1,13 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.domain.entities.sku import SkuEntity
+from app.domain.entities.sku import SkuEntity, SkuImageEntity
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.sku_repo import AbstractSkuRepository
-from app.infrastructure.database.models.sku import SkuModel
+from app.infrastructure.database.models.sku import SkuImageModel, SkuModel
 
 
 class SQLAlchemySkuRepository(AbstractSkuRepository):
@@ -14,7 +15,11 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
         self._session = session
 
     async def get_by_id(self, sku_id: UUID) -> SkuEntity | None:
-        result = await self._session.execute(select(SkuModel).where(SkuModel.id == sku_id))
+        result = await self._session.execute(
+            select(SkuModel)
+            .options(selectinload(SkuModel.images))
+            .where(SkuModel.id == sku_id)
+        )
         model = result.scalar_one_or_none()
         return self._to_entity(model) if model else None
 
@@ -26,6 +31,7 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
 
     async def list_by_product(self, product_id: UUID, only_active: bool = False) -> list[SkuEntity]:
         query = select(SkuModel).where(SkuModel.product_id == product_id)
+        query = query.options(selectinload(SkuModel.images))
         if only_active:
             query = query.where(SkuModel.is_active.is_(True))
         result = await self._session.execute(query)
@@ -34,6 +40,20 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
     async def save(self, sku: SkuEntity) -> SkuEntity:
         model = await self._session.merge(self._to_model(sku))
         await self._session.flush()
+        await self._session.execute(
+            delete(SkuImageModel).where(SkuImageModel.sku_id == model.id)
+        )
+        for image in sku.images:
+            await self._session.merge(
+                SkuImageModel(
+                    id=image.id,
+                    sku_id=model.id,
+                    url=image.url,
+                    ordering=image.ordering,
+                )
+            )
+        await self._session.flush()
+        await self._session.refresh(model, attribute_names=["images"])
         return self._to_entity(model)
 
     async def count_by_product(self, product_id: UUID) -> int:
@@ -61,7 +81,17 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
             reserved_quantity=model.reserved_quantity,
             active_quantity=model.active_quantity,
             article=model.article,
-            image=model.image,
+            images=[
+                SkuImageEntity(
+                    id=image.id,
+                    url=image.url,
+                    ordering=image.ordering,
+                    created_at=image.created_at,
+                )
+                for image in getattr(model, "images", [])
+            ] or (
+                [SkuImageEntity(url=model.image, ordering=0)] if model.image else []
+            ),
             is_active=model.is_active,
             created_at=model.created_at,
             updated_at=model.updated_at,

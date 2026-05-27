@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import ClassVar
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
@@ -17,7 +18,9 @@ class Settings(BaseSettings):
     B2C_TO_B2B_KEY: str = "changeme"
     B2B_TO_B2C_KEY: str = "changeme"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue] берем переменные из .env

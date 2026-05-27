@@ -1,17 +1,27 @@
 import re
-from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from app.domain.entities.category import CategoryEntity
-from app.domain.entities.product import CharacteristicEntity, FieldReportEntity, ProductEntity, ProductImageEntity
+from app.domain.entities.product import (
+    CharacteristicEntity,
+    FieldReportEntity,
+    ProductEntity,
+    ProductImageEntity,
+)
+from app.domain.entities.sku import SkuEntity
 from app.domain.events import AbstractEventPublisher
-from app.domain.exceptions import ForbiddenException, NotFoundException, ValidationException
+from app.domain.exceptions import (
+    ForbiddenException,
+    NotFoundException,
+    ValidationException,
+)
 from app.domain.repositories.category_repo import AbstractCategoryRepository
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.seller_repo import AbstractSellerRepository
+from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.product_status import ProductStatus
-from app.schemas.product import ProductCreate
-from app.schemas.product import ModerationEventRequest, ProductUpdate
+from app.schemas.product import ModerationEventRequest, ProductCreate, ProductUpdate
 
 
 def _slugify(title: str) -> str:
@@ -29,18 +39,20 @@ class ProductService:
         category_repo: AbstractCategoryRepository,
         event_publisher: AbstractEventPublisher | None = None,
     ) -> None:
-        self._product_repo = product_repo
-        self._seller_repo = seller_repo
-        self._category_repo = category_repo
-        self._event_publisher = event_publisher
+        self._product_repo: AbstractProductRepository = product_repo
+        self._seller_repo: AbstractSellerRepository = seller_repo
+        self._category_repo: AbstractCategoryRepository = category_repo
+        self._event_publisher: AbstractEventPublisher | None = event_publisher
 
-    async def create_product(self, seller_id: UUID, payload: ProductCreate) -> ProductEntity:
-        await self._seller_repo.get_or_raise(seller_id)
+    async def create_product(
+        self, seller_id: UUID, payload: ProductCreate
+    ) -> ProductEntity:
+        _ = await self._seller_repo.get_or_raise(seller_id)
 
         if not payload.images:
             raise ValidationException("At least one image is required")
 
-        await self._category_repo.get_or_raise(payload.category_id)
+        _ = await self._category_repo.get_or_raise(payload.category_id)
 
         product = ProductEntity.create(
             seller_id=seller_id,
@@ -55,7 +67,9 @@ class ProductService:
         )
         for img in payload.images:
             product.images.append(
-                ProductImageEntity(product_id=product.id, url=img.url, ordering=img.ordering)
+                ProductImageEntity(
+                    product_id=product.id, url=img.url, ordering=img.ordering
+                )
             )
 
         return await self._product_repo.save(product)
@@ -77,14 +91,14 @@ class ProductService:
         if payload.description is not None:
             product.description = payload.description
         if payload.category_id is not None:
-            await self._category_repo.get_or_raise(payload.category_id)
+            _ = await self._category_repo.get_or_raise(payload.category_id)
             product.category_id = payload.category_id
         if payload.characteristics is not None:
             product.characteristics = [
                 CharacteristicEntity(name=c.name, value=c.value)
                 for c in payload.characteristics
             ]
-        product.updated_at = datetime.utcnow()
+        product.updated_at = utc_now()
         return await self._product_repo.save(product)
 
     async def delete_product(self, seller_id: UUID, product_id: UUID) -> None:
@@ -94,8 +108,8 @@ class ProductService:
         if product.status == ProductStatus.HARD_BLOCKED:
             raise ForbiddenException("Cannot delete hard-blocked product")
         product.deleted = True
-        product.updated_at = datetime.utcnow()
-        await self._product_repo.save(product)
+        product.updated_at = utc_now()
+        _ = await self._product_repo.save(product)
 
     async def get_product(
         self, seller_id: UUID | None, product_id: UUID
@@ -135,22 +149,26 @@ class ProductService:
             limit=limit,
             offset=offset,
         )
-        result = []
-        for product in products:
-            category = await self._category_repo.get_by_id(product.category_id)
-            if category is None:
-                category = CategoryEntity(id=product.category_id, name="")
-            result.append((product, category))
-        return result, total_count
+        return [
+            (product, CategoryEntity(id=product.category_id, name=""))
+            for product in products
+        ], total_count
 
     async def apply_moderation_event(self, payload: ModerationEventRequest) -> bool:
         product = await self._product_repo.get_with_skus_and_reports(payload.product_id)
         if product is None:
             raise NotFoundException("Product not found")
-        if payload.event_type == ProductStatus.BLOCKED.value and payload.blocking_reason_id is None:
-            raise ValidationException("blocking_reason_id is required for BLOCKED event")
+        if (
+            payload.event_type == ProductStatus.BLOCKED.value
+            and payload.blocking_reason_id is None
+        ):
+            raise ValidationException(
+                "blocking_reason_id is required for BLOCKED event"
+            )
 
-        is_new_event = await self._product_repo.mark_moderation_event_processed(payload.idempotency_key)
+        is_new_event = await self._product_repo.mark_moderation_event_processed(
+            payload.idempotency_key
+        )
         if not is_new_event:
             return False
 
@@ -163,7 +181,11 @@ class ProductService:
             product.field_reports = []
             product.moderated_at = payload.occurred_at
         else:
-            product.status = ProductStatus.HARD_BLOCKED if payload.hard_block else ProductStatus.BLOCKED
+            product.status = (
+                ProductStatus.HARD_BLOCKED
+                if payload.hard_block
+                else ProductStatus.BLOCKED
+            )
             product.blocked = True
             product.blocking_reason_id = payload.blocking_reason_id
             product.moderator_comment = payload.moderator_comment
@@ -177,13 +199,16 @@ class ProductService:
                 for report in (payload.field_reports or [])
             ]
 
-        product.updated_at = datetime.utcnow()
-        await self._product_repo.save(product)
+        product.updated_at = utc_now()
+        _ = await self._product_repo.save(product)
 
-        if payload.event_type == ProductStatus.BLOCKED.value and self._event_publisher is not None:
+        if (
+            payload.event_type == ProductStatus.BLOCKED.value
+            and self._event_publisher is not None
+        ):
             await self._event_publisher.publish_product_blocked(
                 product_id=product.id,
-                sku_ids=[sku.id for sku in product.skus],
+                sku_ids=[sku.id for sku in cast(list[SkuEntity], product.skus)],
                 hard_block=payload.hard_block,
             )
         return True

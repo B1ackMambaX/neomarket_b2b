@@ -1,5 +1,12 @@
 import os
+from pathlib import Path
 
-# Must be set before any app module is imported so pydantic-settings picks them up.
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test_db")
-os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only")
+from dotenv import load_dotenv
+
+_ = load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/neomarket_test",
+)
+_ = os.environ.setdefault("SECRET_KEY", "test-secret-key-for-pytest-only")

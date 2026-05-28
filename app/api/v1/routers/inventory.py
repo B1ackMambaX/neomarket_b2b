@@ -1,13 +1,18 @@
-from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
 from app.api.v1.dependencies.auth import require_b2c_service_key
 from app.core.dependencies import get_inventory_service
-from app.domain.exceptions import InsufficientStockException
+from app.domain.exceptions import (
+    IdempotencyConflictException,
+    InsufficientReservedException,
+    InsufficientStockException,
+)
 from app.schemas.inventory import (
     FailedItemDetail,
+    FailedReservedItemDetail,
     ReserveItemResponse,
     ReserveRequest,
     ReserveSuccessResponse,
@@ -21,15 +26,16 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
 @router.post(
     "/reserve",
+    response_model=ReserveSuccessResponse,
     status_code=status.HTTP_200_OK,
     summary="Зарезервировать SKU (all-or-nothing). Идемпотентно по idempotency_key.",
     operation_id="reserveInventory",
 )
 async def reserve_inventory(
     payload: ReserveRequest,
-    _: None = Depends(require_b2c_service_key),
-    service: InventoryService = Depends(get_inventory_service),
-) -> ReserveSuccessResponse:
+    _: Annotated[None, Depends(require_b2c_service_key)],
+    service: Annotated[InventoryService, Depends(get_inventory_service)],
+) -> ReserveSuccessResponse | JSONResponse:
     try:
         result = await service.reserve(
             idempotency_key=payload.idempotency_key,
@@ -71,11 +77,32 @@ async def reserve_inventory(
 )
 async def unreserve_inventory(
     payload: UnreserveRequest,
-    _: None = Depends(require_b2c_service_key),
-    service: InventoryService = Depends(get_inventory_service),
-) -> UnreserveResponse:
-    await service.unreserve(
-        order_id=payload.order_id,
-        items=[(item.sku_id, item.quantity) for item in payload.items],
-    )
-    return UnreserveResponse(order_id=payload.order_id, processed_at=datetime.now(timezone.utc))
+    _: Annotated[None, Depends(require_b2c_service_key)],
+    service: Annotated[InventoryService, Depends(get_inventory_service)],
+) -> UnreserveResponse | JSONResponse:
+    try:
+        result = await service.unreserve(
+            order_id=payload.order_id,
+            items=[(item.sku_id, item.quantity) for item in payload.items],
+        )
+        return UnreserveResponse(
+            order_id=result.order_id,
+            processed_at=result.processed_at,
+        )
+    except InsufficientReservedException as exc:
+        failed = [FailedReservedItemDetail(**fi) for fi in exc.failed_items]
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "code": exc.code,
+                "message": str(exc),
+                "details": {
+                    "failed_items": [item.model_dump(mode="json") for item in failed]
+                },
+            },
+        )
+    except IdempotencyConflictException as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": exc.code, "message": str(exc)},
+        )

@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from app.domain.exceptions import DomainException
+from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.invoice_status import InvoiceStatus
 
 
@@ -13,7 +14,7 @@ class InvoiceItemEntity:
     quantity: int
     price_per_unit: int  # в копейках
     id: UUID = field(default_factory=uuid4)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
 
     @property
     def total(self) -> int:
@@ -26,7 +27,7 @@ class InvoiceEntity:
     invoice_number: str
     id: UUID = field(default_factory=uuid4)
     status: InvoiceStatus = InvoiceStatus.DRAFT
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
     accepted_at: datetime | None = None
     items: list[InvoiceItemEntity] = field(default_factory=list)
 
@@ -49,7 +50,7 @@ class InvoiceEntity:
         if self.status != InvoiceStatus.SENT:
             raise DomainException(f"Cannot accept invoice in status {self.status}")
         self.status = InvoiceStatus.ACCEPTED
-        self.accepted_at = datetime.utcnow()
+        self.accepted_at = utc_now()
 
     def reject(self) -> None:
         if self.status != InvoiceStatus.SENT:

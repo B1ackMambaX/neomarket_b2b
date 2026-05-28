@@ -1,9 +1,10 @@
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
-from uuid import UUID, NAMESPACE_URL, uuid5
+from typing import override
+from uuid import NAMESPACE_URL, uuid5
 
 from app.domain.entities.product import ProductEntity
+from app.domain.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -15,17 +16,20 @@ class AbstractModerationClient(ABC):
 
 class HttpModerationClient(AbstractModerationClient):
     def __init__(self, url: str, service_key: str) -> None:
-        self._url = url
-        self._service_key = service_key
+        self._url: str = url
+        self._service_key: str = service_key
 
+    @override
     async def send_product_created(self, product: ProductEntity) -> None:
         try:
             import httpx
 
             payload = {
                 "event_type": "PRODUCT_CREATED",
-                "idempotency_key": str(uuid5(NAMESPACE_URL, f"{product.id}:PRODUCT_CREATED")),
-                "occurred_at": datetime.utcnow().isoformat() + "Z",
+                "idempotency_key": str(
+                    uuid5(NAMESPACE_URL, f"{product.id}:PRODUCT_CREATED")
+                ),
+                "occurred_at": utc_now().isoformat() + "Z",
                 "payload": {
                     "product_id": str(product.id),
                     "seller_id": str(product.seller_id),
@@ -43,7 +47,7 @@ class HttpModerationClient(AbstractModerationClient):
                     json=payload,
                     headers={"X-Service-Key": self._service_key},
                 )
-                response.raise_for_status()
+                _ = response.raise_for_status()
         except Exception:
             logger.exception(
                 "Failed to send CREATED event to Moderation for product %s", product.id

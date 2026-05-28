@@ -5,7 +5,7 @@ Most tests use dependency overrides; real ORM regressions use the test DB.
 # pyright: reportAny=false, reportUnknownMemberType=false, reportUntypedFunctionDecorator=false
 
 from collections.abc import AsyncIterator
-from typing import cast, override
+from typing import override
 from uuid import UUID, uuid4
 
 import pytest
@@ -219,7 +219,7 @@ class _StubCategoryRepo(AbstractCategoryRepository):
 
 
 def _product_skus(product: ProductEntity) -> list[SkuEntity]:
-    return cast(list[SkuEntity], product.skus)
+    return product.skus
 
 
 # ---------------------------------------------------------------------------

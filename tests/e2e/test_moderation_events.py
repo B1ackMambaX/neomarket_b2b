@@ -341,13 +341,20 @@ async def test_duplicate_event_same_idempotency_key_no_side_effects():
     assert len(publisher.blocked_events) == 1
 
 
+@pytest.mark.parametrize("headers", [{}, {"X-Service-Key": "invalid"}])
 @pytest.mark.asyncio
-async def test_missing_service_key_returns_401():
+async def test_invalid_service_key_returns_401_with_error_shape(
+    headers: dict[str, str],
+):
     product = _make_product()
     payload = _event_payload(product.id)
 
-    response, repo, publisher = await _post_event(product, payload, headers={})
+    response, repo, publisher = await _post_event(product, payload, headers=headers)
 
     assert response.status_code == 401
+    assert response.json() == {
+        "code": "UNAUTHORIZED",
+        "message": "Invalid service key",
+    }
     assert repo.save_count == 0
     assert publisher.blocked_events == []

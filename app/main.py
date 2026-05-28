@@ -36,7 +36,13 @@ app.add_middleware(
 )
 
 app.add_exception_handler(DomainException, domain_exception_handler)
-app.add_exception_handler(HTTPException, http_exception_handler)
+
+
+@app.exception_handler(HTTPException)
+async def fastapi_http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(RequestValidationError)
@@ -57,8 +63,12 @@ async def validation_exception_handler(
 
 
 from app.api.v1.routers.inventory import router as inventory_router  # noqa: E402
-from app.api.v1.routers.moderation_events import router as moderation_events_router  # noqa: E402
-from app.api.v1.routers.products import public_router as public_products_router  # noqa: E402
+from app.api.v1.routers.moderation_events import (
+    router as moderation_events_router,  # noqa: E402
+)
+from app.api.v1.routers.products import (
+    public_router as public_products_router,  # noqa: E402
+)
 from app.api.v1.routers.products import router as products_router  # noqa: E402
 from app.api.v1.routers.skus import router as skus_router  # noqa: E402
 

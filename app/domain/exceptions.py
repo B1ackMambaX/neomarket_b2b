@@ -40,6 +40,10 @@ class ForbiddenException(DomainException):
     code: ClassVar[str] = "FORBIDDEN"
 
 
+class InvalidProductStateException(DomainException):
+    code: ClassVar[str] = "INVALID_PRODUCT_STATE"
+
+
 class InsufficientStockException(DomainException):
     code: ClassVar[str] = "INSUFFICIENT_STOCK"
     failed_items: list[FailedStockItem]

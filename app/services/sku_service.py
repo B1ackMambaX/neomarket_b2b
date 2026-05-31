@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import UUID
 
 from app.domain.entities.sku import SkuCharacteristicEntity, SkuEntity, SkuImageEntity
@@ -6,13 +7,14 @@ from app.domain.exceptions import (
     ForbiddenException,
     NotFoundException,
     NotOwnerException,
-    ValidationException,
 )
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.sku_repo import AbstractSkuRepository
 from app.domain.value_objects.product_status import ProductStatus
 from app.infrastructure.external.moderation_client import AbstractModerationClient
 from app.schemas.sku import SKUCreate
+
+logger = logging.getLogger(__name__)
 
 
 class SkuService:
@@ -25,6 +27,21 @@ class SkuService:
         self._sku_repo: AbstractSkuRepository = sku_repo
         self._product_repo: AbstractProductRepository = product_repo
         self._moderation_client: AbstractModerationClient = moderation_client
+        self._background_tasks: set[asyncio.Task[None]] = set()
+
+    def _track_background_task(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._log_background_task_result)
+
+    @staticmethod
+    def _log_background_task_result(task: asyncio.Task[None]) -> None:
+        try:
+            _ = task.result()
+        except asyncio.CancelledError:
+            logger.warning("Background moderation delivery task was cancelled")
+        except Exception:
+            logger.exception("Background moderation delivery task failed")
 
     async def create_sku(self, seller_id: UUID, payload: SKUCreate) -> SkuEntity:
         product = await self._product_repo.get_by_id_for_update(payload.product_id)
@@ -36,9 +53,6 @@ class SkuService:
 
         if product.status == ProductStatus.HARD_BLOCKED:
             raise ForbiddenException("Cannot add SKU to hard-blocked product")
-
-        if not payload.images:
-            raise ValidationException("image is required")
 
         sku = SkuEntity.create(
             product_id=product.id,
@@ -65,9 +79,10 @@ class SkuService:
         if is_first_sku and product.status == ProductStatus.CREATED:
             product.submit_for_moderation()
             _ = await self._product_repo.save(product)
-            # fire-and-forget: event delivery must not block or fail SKU creation
-            _ = asyncio.create_task(
-                self._moderation_client.send_product_created(product)
+            self._track_background_task(
+                asyncio.create_task(
+                    self._moderation_client.send_product_created(product)
+                )
             )
 
         return saved_sku

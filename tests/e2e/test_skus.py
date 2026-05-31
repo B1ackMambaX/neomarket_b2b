@@ -393,7 +393,7 @@ async def test_add_sku_to_hard_blocked_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_missing_image_returns_400(seller_id: UUID, valid_token: str) -> None:
+async def test_missing_image_returns_422(seller_id: UUID, valid_token: str) -> None:
     from app.core.dependencies import get_sku_service
     from app.main import app
 
@@ -410,8 +410,10 @@ async def test_missing_image_returns_400(seller_id: UUID, valid_token: str) -> N
         )
     _ = app.dependency_overrides.pop(get_sku_service, None)
 
-    assert response.status_code == 400
-    assert "image" in response.json().get("message", "").lower()
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "INVALID_REQUEST"
+    assert body["field"] == "images"
 
 
 @pytest.mark.asyncio

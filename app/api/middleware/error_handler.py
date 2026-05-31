@@ -8,6 +8,7 @@ from app.domain.exceptions import (
     DomainException,
     ForbiddenException,
     IdempotencyConflictException,
+    InvalidProductStateException,
     InsufficientReservedException,
     NotFoundException,
     NotOwnerException,
@@ -19,6 +20,7 @@ _DOMAIN_STATUS_MAP: Final[dict[type[DomainException], int]] = {
     PermissionDeniedException: 403,
     NotOwnerException: 403,
     ForbiddenException: 403,
+    InvalidProductStateException: 409,
     InsufficientReservedException: 409,
     IdempotencyConflictException: 409,
 }

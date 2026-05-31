@@ -21,10 +21,12 @@ class SKUCreate(BaseModel):
     product_id: UUID
     name: str = Field(min_length=1, max_length=255)
     price: int = Field(ge=0, description="Price in kopecks")
-    cost_price: int | None = Field(default=None, ge=0, description="Cost price in kopecks (seller-only)")
+    cost_price: int | None = Field(
+        default=None, ge=0, description="Cost price in kopecks (seller-only)"
+    )
     discount: int = Field(default=0, ge=0, description="Absolute discount in kopecks")
     article: str | None = None
-    images: list[SKUImageCreate] = Field(default_factory=list)
+    images: list[SKUImageCreate] = Field(default_factory=list, min_length=1)
     characteristics: list[CharacteristicInput] = Field(default_factory=list)
 
 

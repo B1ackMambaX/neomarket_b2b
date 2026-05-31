@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from app.domain.entities.sku import SkuEntity
-from app.domain.exceptions import DomainException
+from app.domain.exceptions import InvalidProductStateException
 from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.product_status import ProductStatus
 
@@ -78,15 +78,17 @@ class ProductEntity:
 
     def submit_for_moderation(self) -> None:
         if self.status != ProductStatus.CREATED:
-            raise DomainException(
-                f"Cannot submit product in status {self.status} for moderation"
+            raise InvalidProductStateException(
+                f"Cannot submit product in status {self.status.value} for moderation"
             )
         self.status = ProductStatus.ON_MODERATION
         self.updated_at = utc_now()
 
     def approve(self) -> None:
         if self.status != ProductStatus.ON_MODERATION:
-            raise DomainException(f"Cannot approve product in status {self.status}")
+            raise InvalidProductStateException(
+                f"Cannot approve product in status {self.status.value}"
+            )
         self.status = ProductStatus.MODERATED
         self.moderated_at = utc_now()
         self.updated_at = utc_now()

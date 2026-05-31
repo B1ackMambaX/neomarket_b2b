@@ -26,6 +26,8 @@ from app.services.inventory_service import InventoryService
 from app.services.product_service import ProductService
 from app.services.sku_service import SkuService
 
+_moderation_client: HttpModerationClient | None = None
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionFactory() as session:
@@ -59,10 +61,20 @@ def get_inventory_service(
 
 
 def get_moderation_client() -> HttpModerationClient:
-    return HttpModerationClient(
-        url=settings.MODERATION_URL,
-        service_key=settings.B2B_TO_MOD_KEY,
-    )
+    global _moderation_client
+    if _moderation_client is None:
+        _moderation_client = HttpModerationClient(
+            url=settings.MODERATION_URL,
+            service_key=settings.B2B_TO_MOD_KEY,
+        )
+    return _moderation_client
+
+
+async def close_moderation_client() -> None:
+    global _moderation_client
+    if _moderation_client is not None:
+        await _moderation_client.close()
+        _moderation_client = None
 
 
 def get_sku_service(

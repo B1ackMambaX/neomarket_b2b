@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
+from typing import override
 from uuid import UUID, uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.domain.entities.category import CategoryEntity
 from app.domain.entities.product import FieldReportEntity, ProductEntity
+from app.domain.entities.seller import SellerEntity
 from app.domain.events import AbstractEventPublisher
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.category_repo import AbstractCategoryRepository
@@ -17,54 +19,81 @@ from app.domain.value_objects.product_status import ProductStatus
 from app.schemas.product import ModerationEventRequest
 from app.services.product_service import ProductService
 
+ModerationPayloadValue = str | bool | list[dict[str, str | None]]
+ModerationPayload = dict[str, ModerationPayloadValue]
+
 
 class _ModerationProductRepo(AbstractProductRepository):
-    def __init__(self, product: ProductEntity):
-        self.product = product
+    def __init__(self, product: ProductEntity) -> None:
+        self.product: ProductEntity = product
         self.processed_keys: set[UUID] = set()
-        self.save_count = 0
+        self.save_count: int = 0
 
+    @override
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None:
         return self.product if self.product.id == product_id else None
 
+    @override
+    async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:
+        return await self.get_by_id(product_id)
+
+    @override
     async def get_or_raise(self, product_id: UUID) -> ProductEntity:
         product = await self.get_by_id(product_id)
         if product is None:
             raise NotFoundException("Product not found")
         return product
 
+    @override
     async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
         return await self.get_by_id(product_id)
 
-    async def list_by_seller(self, seller_id, status=None, limit=20, offset=0):
+    @override
+    async def list_by_seller(
+        self,
+        seller_id: UUID,
+        status: ProductStatus | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[ProductEntity]:
         return []
 
-    async def list_by_status(self, status, limit=20, offset=0):
+    @override
+    async def list_by_status(
+        self,
+        status: ProductStatus,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[ProductEntity]:
         return []
 
+    @override
     async def list_catalog_visible(
         self,
-        ids=None,
-        category_id=None,
-        seller_id=None,
-        search=None,
-        min_price=None,
-        max_price=None,
-        characteristic_filters=None,
-        sort="created_desc",
-        limit=20,
-        offset=0,
-    ):
+        ids: list[UUID] | None = None,
+        category_id: UUID | None = None,
+        seller_id: UUID | None = None,
+        search: str | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
+        characteristic_filters: dict[str, list[str]] | None = None,
+        sort: str = "created_desc",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProductEntity], int]:
         return [], 0
 
+    @override
     async def save(self, product: ProductEntity) -> ProductEntity:
         self.product = product
         self.save_count += 1
         return product
 
+    @override
     async def delete(self, product_id: UUID) -> None:
         pass
 
+    @override
     async def mark_moderation_event_processed(self, idempotency_key: UUID) -> bool:
         if idempotency_key in self.processed_keys:
             return False
@@ -73,27 +102,34 @@ class _ModerationProductRepo(AbstractProductRepository):
 
 
 class _SellerRepo(AbstractSellerRepository):
-    async def get_by_id(self, seller_id):
+    @override
+    async def get_by_id(self, seller_id: UUID) -> SellerEntity | None:
         return None
 
-    async def get_or_raise(self, seller_id):
+    @override
+    async def get_or_raise(self, seller_id: UUID) -> SellerEntity:
+        raise NotFoundException("Seller not found")
+
+    @override
+    async def get_by_inn(self, inn: str) -> SellerEntity | None:
         return None
 
-    async def get_by_inn(self, inn):
-        return None
-
-    async def list(self, limit=20, offset=0):
+    @override
+    async def list(self, limit: int = 20, offset: int = 0) -> list[SellerEntity]:
         return []
 
-    async def save(self, seller):
+    @override
+    async def save(self, seller: SellerEntity) -> SellerEntity:
         return seller
 
 
 class _CategoryRepo(AbstractCategoryRepository):
-    async def get_by_id(self, category_id):
+    @override
+    async def get_by_id(self, category_id: UUID) -> CategoryEntity | None:
         return CategoryEntity(id=category_id, name="Category")
 
-    async def get_or_raise(self, category_id):
+    @override
+    async def get_or_raise(self, category_id: UUID) -> CategoryEntity:
         return CategoryEntity(id=category_id, name="Category")
 
 
@@ -101,9 +137,11 @@ class _Publisher(AbstractEventPublisher):
     def __init__(self) -> None:
         self.blocked_events: list[tuple[UUID, list[UUID]]] = []
 
+    @override
     async def publish_sku_out_of_stock(self, sku_id: UUID) -> None:
         pass
 
+    @override
     async def publish_product_blocked(
         self, product_id: UUID, sku_ids: list[UUID], *, hard_block: bool = False
     ) -> None:
@@ -124,13 +162,18 @@ def _make_product(status: ProductStatus = ProductStatus.ON_MODERATION) -> Produc
     )
     if status == ProductStatus.BLOCKED:
         product.field_reports.append(
-            FieldReportEntity(product_id=product.id, field_name="title", comment="old report")
+            FieldReportEntity(
+                product_id=product.id, field_name="title", comment="old report"
+            )
         )
     return product
 
 
-def _event_payload(product_id: UUID, **overrides):
-    payload = {
+def _event_payload(
+    product_id: UUID,
+    **overrides: ModerationPayloadValue,
+) -> ModerationPayload:
+    payload: ModerationPayload = {
         "idempotency_key": str(uuid4()),
         "product_id": str(product_id),
         "event_type": "MODERATED",
@@ -140,7 +183,11 @@ def _event_payload(product_id: UUID, **overrides):
     return payload
 
 
-async def _post_event(product: ProductEntity, payload: dict, headers: dict[str, str] | None = None):
+async def _post_event(
+    product: ProductEntity,
+    payload: ModerationPayload,
+    headers: dict[str, str] | None = None,
+) -> tuple[Response, _ModerationProductRepo, _Publisher]:
     from app.core.dependencies import get_product_service
     from app.main import app
 
@@ -158,9 +205,11 @@ async def _post_event(product: ProductEntity, payload: dict, headers: dict[str, 
         response = await client.post(
             "/api/v1/moderation/events",
             json=payload,
-            headers=headers if headers is not None else {"X-Service-Key": settings.B2B_TO_MOD_KEY},
+            headers=headers
+            if headers is not None
+            else {"X-Service-Key": settings.B2B_TO_MOD_KEY},
         )
-    app.dependency_overrides.pop(get_product_service, None)
+    _ = app.dependency_overrides.pop(get_product_service, None)
     return response, repo, publisher
 
 
@@ -190,7 +239,9 @@ async def test_blocked_soft_saves_field_reports():
         hard_block=False,
         blocking_reason_id=str(reason_id),
         moderator_comment="bad description",
-        field_reports=[{"field_name": "description", "sku_id": None, "comment": "copied text"}],
+        field_reports=[
+            {"field_name": "description", "sku_id": None, "comment": "copied text"}
+        ],
     )
 
     response, repo, publisher = await _post_event(product, payload)
@@ -247,7 +298,7 @@ async def test_hard_blocked_product_rejects_seller_edits():
             f"/api/v1/products/{product.id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-    app.dependency_overrides.pop(get_product_service, None)
+    _ = app.dependency_overrides.pop(get_product_service, None)
 
     assert put_response.status_code == 403
     assert delete_response.status_code == 403
@@ -290,13 +341,20 @@ async def test_duplicate_event_same_idempotency_key_no_side_effects():
     assert len(publisher.blocked_events) == 1
 
 
+@pytest.mark.parametrize("headers", [{}, {"X-Service-Key": "invalid"}])
 @pytest.mark.asyncio
-async def test_missing_service_key_returns_401():
+async def test_invalid_service_key_returns_401_with_error_shape(
+    headers: dict[str, str],
+):
     product = _make_product()
     payload = _event_payload(product.id)
 
-    response, repo, publisher = await _post_event(product, payload, headers={})
+    response, repo, publisher = await _post_event(product, payload, headers=headers)
 
     assert response.status_code == 401
+    assert response.json() == {
+        "code": "UNAUTHORIZED",
+        "message": "Invalid service key",
+    }
     assert repo.save_count == 0
     assert publisher.blocked_events == []

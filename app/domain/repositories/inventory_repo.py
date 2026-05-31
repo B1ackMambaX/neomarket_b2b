@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.domain.entities.inventory import ReservationResult
+from app.domain.entities.inventory import ReservationResult, UnreserveResult
 
 
 class AbstractInventoryRepository(ABC):
@@ -19,4 +19,4 @@ class AbstractInventoryRepository(ABC):
         self,
         order_id: UUID,
         items: list[tuple[UUID, int]],
-    ) -> None: ...
+    ) -> UnreserveResult: ...

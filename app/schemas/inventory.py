@@ -36,6 +36,13 @@ class FailedItemDetail(BaseModel):
     reason: str
 
 
+class FailedReservedItemDetail(BaseModel):
+    sku_id: UUID
+    requested: int
+    reserved: int
+    reason: str
+
+
 class UnreserveItemRequest(BaseModel):
     sku_id: UUID
     quantity: int = Field(ge=1)

@@ -8,7 +8,7 @@ from app.infrastructure.database.models.base import Base
 
 
 class ModerationEventModel(Base):
-    __tablename__ = "moderation_events"
+    __tablename__: str = "moderation_events"
 
     sender_service: Mapped[str] = mapped_column(String(64), primary_key=True)
     idempotency_key: Mapped[uuid.UUID] = mapped_column(primary_key=True)

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from app.domain.entities.inventory import ReservationResult
+from app.domain.entities.inventory import ReservationResult, UnreserveResult
 from app.domain.events import AbstractEventPublisher
 from app.domain.repositories.inventory_repo import AbstractInventoryRepository
 
@@ -11,8 +11,8 @@ class InventoryService:
         inventory_repo: AbstractInventoryRepository,
         event_publisher: AbstractEventPublisher,
     ) -> None:
-        self._inventory_repo = inventory_repo
-        self._event_publisher = event_publisher
+        self._inventory_repo: AbstractInventoryRepository = inventory_repo
+        self._event_publisher: AbstractEventPublisher = event_publisher
 
     async def reserve(
         self,
@@ -34,5 +34,5 @@ class InventoryService:
         self,
         order_id: UUID,
         items: list[tuple[UUID, int]],
-    ) -> None:
-        await self._inventory_repo.unreserve(order_id=order_id, items=items)
+    ) -> UnreserveResult:
+        return await self._inventory_repo.unreserve(order_id=order_id, items=items)

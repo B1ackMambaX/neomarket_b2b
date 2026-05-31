@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from app.domain.exceptions import DomainException, ValidationException
+from app.domain.utils.datetime import utc_now
 
 
 @dataclass
@@ -14,21 +15,35 @@ class SkuCharacteristicEntity:
 
 
 @dataclass
+class SkuImageEntity:
+    url: str
+    ordering: int = 0
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass
 class SkuEntity:
     product_id: UUID
     name: str
-    price: int       # kopecks
+    price: int  # kopecks
     cost_price: int | None  # kopecks, seller-only
     id: UUID = field(default_factory=uuid4)
     discount: int = 0
     active_quantity: int = 0
     reserved_quantity: int = 0
     article: str | None = None
-    image: str | None = None  # primary image URL
+    images: list[SkuImageEntity] = field(default_factory=list)
     is_active: bool = True
     characteristics: list[SkuCharacteristicEntity] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def image(self) -> str | None:
+        if not self.images:
+            return None
+        return min(self.images, key=lambda image: image.ordering).url
 
     @classmethod
     def create(
@@ -39,7 +54,7 @@ class SkuEntity:
         cost_price: int | None = None,
         discount: int = 0,
         article: str | None = None,
-        image: str | None = None,
+        images: list[SkuImageEntity] | None = None,
         characteristics: list[SkuCharacteristicEntity] | None = None,
     ) -> "SkuEntity":
         if price < 0:
@@ -55,7 +70,7 @@ class SkuEntity:
             cost_price=cost_price,
             discount=discount,
             article=article,
-            image=image,
+            images=images or [],
             characteristics=characteristics or [],
         )
 
@@ -67,16 +82,18 @@ class SkuEntity:
         if amount <= 0:
             raise DomainException("Quantity increase must be positive")
         self.active_quantity += amount
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()
 
     def decrease_quantity(self, amount: int) -> None:
         if amount <= 0:
             raise DomainException("Quantity decrease must be positive")
         if self.active_quantity < amount:
-            raise DomainException(f"Insufficient quantity: {self.active_quantity} < {amount}")
+            raise DomainException(
+                f"Insufficient quantity: {self.active_quantity} < {amount}"
+            )
         self.active_quantity -= amount
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()
 
     def deactivate(self) -> None:
         self.is_active = False
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()

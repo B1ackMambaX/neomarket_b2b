@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException, RequestValidationError
@@ -11,13 +12,17 @@ from app.api.middleware.error_handler import (
 )
 from app.core.config import ALLOWED_ORIGINS, settings
 from app.core.database import engine
+from app.core.dependencies import close_moderation_client
 from app.domain.exceptions import DomainException
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    await engine.dispose()
+async def lifespan(_app: FastAPI):
+    try:
+        yield
+    finally:
+        await close_moderation_client()
+        await engine.dispose()
 
 
 app = FastAPI(
@@ -36,29 +41,44 @@ app.add_middleware(
 )
 
 app.add_exception_handler(DomainException, domain_exception_handler)
-app.add_exception_handler(HTTPException, http_exception_handler)
+
+
+@app.exception_handler(HTTPException)
+async def fastapi_http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
+    _request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    errors = exc.errors()
+    errors = cast(list[dict[str, object]], exc.errors())
     first = errors[0] if errors else {}
-    field = str(first.get("loc", ["unknown"])[-1])
+    loc = first.get("loc")
+    field = "unknown"
+    if isinstance(loc, (list, tuple)) and loc:
+        loc_parts = cast(list[object] | tuple[object, ...], loc)
+        field = str(loc_parts[-1])
+    message = first.get("msg", "Validation error")
     return JSONResponse(
         status_code=422,
         content={
             "code": "INVALID_REQUEST",
-            "message": first.get("msg", "Validation error"),
+            "message": str(message),
             "field": field,
         },
     )
 
 
 from app.api.v1.routers.inventory import router as inventory_router  # noqa: E402
-from app.api.v1.routers.moderation_events import router as moderation_events_router  # noqa: E402
-from app.api.v1.routers.products import public_router as public_products_router  # noqa: E402
+from app.api.v1.routers.moderation_events import (
+    router as moderation_events_router,  # noqa: E402
+)
+from app.api.v1.routers.products import (
+    public_router as public_products_router,  # noqa: E402
+)
 from app.api.v1.routers.products import router as products_router  # noqa: E402
 from app.api.v1.routers.skus import router as skus_router  # noqa: E402
 

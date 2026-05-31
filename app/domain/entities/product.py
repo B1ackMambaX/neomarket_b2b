@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from app.domain.exceptions import DomainException
+from app.domain.entities.sku import SkuEntity
+from app.domain.exceptions import InvalidProductStateException
+from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.product_status import ProductStatus
 
 
@@ -12,7 +14,7 @@ class ProductImageEntity:
     url: str
     id: UUID = field(default_factory=uuid4)
     ordering: int = 0
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
 
 
 @dataclass
@@ -45,12 +47,12 @@ class ProductEntity:
     blocking_reason_id: UUID | None = None
     blocking_reason_title: str | None = None
     moderator_comment: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
     moderated_at: datetime | None = None
     images: list[ProductImageEntity] = field(default_factory=list)
     characteristics: list[CharacteristicEntity] = field(default_factory=list)
-    skus: list = field(default_factory=list)
+    skus: list[SkuEntity] = field(default_factory=list)
     field_reports: list[FieldReportEntity] = field(default_factory=list)
 
     @classmethod
@@ -76,18 +78,22 @@ class ProductEntity:
 
     def submit_for_moderation(self) -> None:
         if self.status != ProductStatus.CREATED:
-            raise DomainException(f"Cannot submit product in status {self.status} for moderation")
+            raise InvalidProductStateException(
+                f"Cannot submit product in status {self.status.value} for moderation"
+            )
         self.status = ProductStatus.ON_MODERATION
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()
 
     def approve(self) -> None:
         if self.status != ProductStatus.ON_MODERATION:
-            raise DomainException(f"Cannot approve product in status {self.status}")
+            raise InvalidProductStateException(
+                f"Cannot approve product in status {self.status.value}"
+            )
         self.status = ProductStatus.MODERATED
-        self.moderated_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.moderated_at = utc_now()
+        self.updated_at = utc_now()
 
     def block(self, hard: bool = False) -> None:
         self.status = ProductStatus.HARD_BLOCKED if hard else ProductStatus.BLOCKED
         self.blocked = True
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()

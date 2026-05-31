@@ -8,7 +8,7 @@ from app.infrastructure.database.models.base import Base
 
 
 class CategoryModel(Base):
-    __tablename__ = "categories"
+    __tablename__: str = "categories"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)

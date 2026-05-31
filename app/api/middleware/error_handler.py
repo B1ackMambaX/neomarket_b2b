@@ -1,16 +1,31 @@
+from typing import Final
+
 from fastapi import Request
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 
-from app.domain.exceptions import DomainException, ForbiddenException, NotFoundException, PermissionDeniedException
+from app.domain.exceptions import (
+    DomainException,
+    ForbiddenException,
+    IdempotencyConflictException,
+    InvalidProductStateException,
+    InsufficientReservedException,
+    NotFoundException,
+    NotOwnerException,
+    PermissionDeniedException,
+)
 
-_DOMAIN_STATUS_MAP = {
+_DOMAIN_STATUS_MAP: Final[dict[type[DomainException], int]] = {
     NotFoundException: 404,
     PermissionDeniedException: 403,
+    NotOwnerException: 403,
     ForbiddenException: 403,
+    InvalidProductStateException: 409,
+    InsufficientReservedException: 409,
+    IdempotencyConflictException: 409,
 }
 
-_HTTP_CODE_MAP = {
+_HTTP_CODE_MAP: Final[dict[int, str]] = {
     401: "UNAUTHORIZED",
     403: "FORBIDDEN",
     404: "NOT_FOUND",
@@ -18,7 +33,7 @@ _HTTP_CODE_MAP = {
 }
 
 
-async def domain_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def domain_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainException)
     status_code = _DOMAIN_STATUS_MAP.get(type(exc), 400)
     return JSONResponse(
@@ -27,7 +42,7 @@ async def domain_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def http_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, HTTPException)
     code = _HTTP_CODE_MAP.get(exc.status_code, "HTTP_ERROR")
     return JSONResponse(

@@ -1,3 +1,4 @@
+from typing import Annotated, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -8,6 +9,8 @@ from app.api.v1.dependencies.auth import (
     require_b2c_service_key,
 )
 from app.core.dependencies import get_product_service
+from app.domain.entities.product import ProductEntity
+from app.domain.entities.sku import SkuEntity
 from app.schemas.product import (
     BlockingReasonInProductResponse,
     CategoryInProductResponse,
@@ -16,12 +19,12 @@ from app.schemas.product import (
     ProductCreate,
     ProductDetailResponse,
     ProductImageResponse,
-    ProductUpdate,
     ProductPublicBatchRequest,
     ProductPublicPaginatedResponse,
     ProductPublicResponse,
     ProductPublicShortResponse,
     ProductResponse,
+    ProductUpdate,
 )
 from app.schemas.sku import SKUImageResponse, SKUPublicResponse, SKUResponse
 from app.services.product_service import ProductService
@@ -41,7 +44,19 @@ async def _parse_characteristic_filters(request: Request) -> dict[str, list[str]
     return filters
 
 
-def _public_product_response(product) -> ProductPublicResponse:
+def _sku_image_responses(sku: SkuEntity) -> list[SKUImageResponse]:
+    return [
+        SKUImageResponse(id=image.id, url=image.url, ordering=image.ordering)
+        for image in sorted(sku.images, key=lambda image: image.ordering)
+    ]
+
+
+def _product_skus(product: ProductEntity) -> list[SkuEntity]:
+    return cast(list[SkuEntity], product.skus)
+
+
+def _public_product_response(product: ProductEntity) -> ProductPublicResponse:
+    skus = _product_skus(product)
     return ProductPublicResponse(
         id=product.id,
         seller_id=product.seller_id,
@@ -78,7 +93,7 @@ def _public_product_response(product) -> ProductPublicResponse:
                     for c in sku.characteristics
                 ],
             )
-            for sku in product.skus
+            for sku in skus
             if sku.active_quantity > 0
         ],
         created_at=product.created_at,
@@ -86,8 +101,10 @@ def _public_product_response(product) -> ProductPublicResponse:
     )
 
 
-def _public_product_short_response(product) -> ProductPublicShortResponse:
-    active_skus = [sku for sku in product.skus if sku.active_quantity > 0]
+def _public_product_short_response(
+    product: ProductEntity,
+) -> ProductPublicShortResponse:
+    active_skus = [sku for sku in _product_skus(product) if sku.active_quantity > 0]
     min_price = min((sku.price for sku in active_skus), default=None)
     cover_image = None
     if product.images:
@@ -104,14 +121,14 @@ def _public_product_short_response(product) -> ProductPublicShortResponse:
     )
 
 
-def _product_response(product) -> ProductResponse:
+def _product_response(product: ProductEntity) -> ProductResponse:
     return ProductResponse(
         id=product.id,
         seller_id=product.seller_id,
         category_id=product.category_id,
         title=product.title,
-        slug=product.slug,
-        description=product.description,
+        slug=product.slug or "",
+        description=product.description or "",
         status=product.status,
         deleted=product.deleted,
         blocking_reason_id=product.blocking_reason_id,
@@ -138,17 +155,21 @@ def _product_response(product) -> ProductResponse:
     operation_id="listPublicProducts",
 )
 async def list_catalog_products(
-    _: None = Depends(require_b2c_service_key),
-    characteristic_filters: dict[str, list[str]] = Depends(_parse_characteristic_filters),
-    limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    _: Annotated[None, Depends(require_b2c_service_key)],
+    characteristic_filters: Annotated[
+        dict[str, list[str]], Depends(_parse_characteristic_filters)
+    ],
+    service: Annotated[ProductService, Depends(get_product_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
     category_id: UUID | None = None,
-    search: str | None = Query(default=None, min_length=3),
-    min_price: int | None = Query(default=None, ge=0),
-    max_price: int | None = Query(default=None, ge=0),
+    search: Annotated[str | None, Query(min_length=3)] = None,
+    min_price: Annotated[int | None, Query(ge=0)] = None,
+    max_price: Annotated[int | None, Query(ge=0)] = None,
     seller_id: UUID | None = None,
-    sort: str = Query(default="created_desc", pattern="^(price_asc|price_desc|created_desc|popular)$"),
-    service: ProductService = Depends(get_product_service),
+    sort: Annotated[
+        str, Query(pattern="^(price_asc|price_desc|created_desc|popular)$")
+    ] = "created_desc",
 ) -> ProductPublicPaginatedResponse:
     items, total_count = await service.list_catalog_products(
         category_id=category_id,
@@ -178,10 +199,10 @@ async def list_catalog_products(
 )
 async def batch_catalog_products(
     payload: ProductPublicBatchRequest,
-    _: None = Depends(require_b2c_service_key),
-    service: ProductService = Depends(get_product_service),
+    _: Annotated[None, Depends(require_b2c_service_key)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> list[ProductPublicResponse]:
-    items, _ = await service.list_catalog_products(
+    items, _total_count = await service.list_catalog_products(
         ids=payload.product_ids,
         limit=len(payload.product_ids) or 1,
         offset=0,
@@ -198,8 +219,8 @@ async def batch_catalog_products(
 )
 async def create_product(
     payload: ProductCreate,
-    seller_id: UUID = Depends(get_current_seller_id),
-    service: ProductService = Depends(get_product_service),
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> ProductResponse:
     product = await service.create_product(seller_id=seller_id, payload=payload)
     return _product_response(product)
@@ -215,10 +236,12 @@ async def create_product(
 async def update_product(
     product_id: UUID,
     payload: ProductUpdate,
-    seller_id: UUID = Depends(get_current_seller_id),
-    service: ProductService = Depends(get_product_service),
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> ProductResponse:
-    product = await service.update_product(seller_id=seller_id, product_id=product_id, payload=payload)
+    product = await service.update_product(
+        seller_id=seller_id, product_id=product_id, payload=payload
+    )
     return _product_response(product)
 
 
@@ -231,10 +254,12 @@ async def update_product(
 async def replace_product(
     product_id: UUID,
     payload: ProductUpdate,
-    seller_id: UUID = Depends(get_current_seller_id),
-    service: ProductService = Depends(get_product_service),
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> ProductResponse:
-    product = await service.update_product(seller_id=seller_id, product_id=product_id, payload=payload)
+    product = await service.update_product(
+        seller_id=seller_id, product_id=product_id, payload=payload
+    )
     return _product_response(product)
 
 
@@ -246,8 +271,8 @@ async def replace_product(
 )
 async def delete_product(
     product_id: UUID,
-    seller_id: UUID = Depends(get_current_seller_id),
-    service: ProductService = Depends(get_product_service),
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> None:
     await service.delete_product(seller_id=seller_id, product_id=product_id)
 
@@ -256,15 +281,17 @@ async def delete_product(
     "/{product_id}",
     response_model=ProductDetailResponse | ProductPublicResponse,
     status_code=status.HTTP_200_OK,
-    summary="Карточка товара (seller — полная, X-Service-Key — без cost_price/reserved_quantity)",
+    summary="Карточка товара (seller — полная, X-Service-Key — без cеллерских полей)",
     operation_id="getProduct",
 )
 async def get_product(
     product_id: UUID,
-    seller_id: UUID | None = Depends(get_seller_id_or_service_key),
-    service: ProductService = Depends(get_product_service),
+    seller_id: Annotated[UUID | None, Depends(get_seller_id_or_service_key)],
+    service: Annotated[ProductService, Depends(get_product_service)],
 ) -> ProductDetailResponse | ProductPublicResponse:
-    product, category = await service.get_product(seller_id=seller_id, product_id=product_id)
+    product, category = await service.get_product(
+        seller_id=seller_id, product_id=product_id
+    )
 
     if seller_id is None:
         public_skus = [
@@ -287,7 +314,7 @@ async def get_product(
                     for c in sku.characteristics
                 ],
             )
-            for sku in product.skus
+            for sku in _product_skus(product)
         ]
         return ProductPublicResponse(
             id=product.id,
@@ -330,11 +357,7 @@ async def get_product(
             active_quantity=sku.active_quantity,
             reserved_quantity=sku.reserved_quantity,
             article=sku.article,
-            images=(
-                [SKUImageResponse(id=uuid4(), url=sku.image, ordering=0)]
-                if sku.image
-                else []
-            ),
+            images=_sku_image_responses(sku),
             characteristics=[
                 CharacteristicResponse(id=c.id, name=c.name, value=c.value)
                 for c in sku.characteristics
@@ -342,7 +365,7 @@ async def get_product(
             created_at=sku.created_at,
             updated_at=sku.updated_at,
         )
-        for sku in product.skus
+        for sku in _product_skus(product)
     ]
 
     return ProductDetailResponse(

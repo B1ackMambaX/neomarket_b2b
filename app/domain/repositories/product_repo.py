@@ -6,9 +6,11 @@ from app.domain.value_objects.product_status import ProductStatus
 
 
 class AbstractProductRepository(ABC):
-
     @abstractmethod
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None: ...
+
+    @abstractmethod
+    async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None: ...
 
     @abstractmethod
     async def get_or_raise(self, product_id: UUID) -> ProductEntity: ...
@@ -31,7 +33,9 @@ class AbstractProductRepository(ABC):
     ) -> list[ProductEntity]: ...
 
     @abstractmethod
-    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None: ...
+    async def get_with_skus_and_reports(
+        self, product_id: UUID
+    ) -> ProductEntity | None: ...
 
     @abstractmethod
     async def list_catalog_visible(

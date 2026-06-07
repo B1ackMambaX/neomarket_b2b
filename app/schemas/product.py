@@ -141,6 +141,8 @@ class ProductShortResponse(BaseModel):
     created_at: datetime
     min_price: int | None
     cover_image: str | None
+    skus_count: int
+    total_active_quantity: int
 
 
 class ProductPaginatedResponse(BaseModel):

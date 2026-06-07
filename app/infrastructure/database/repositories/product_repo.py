@@ -79,6 +79,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         seller_id: UUID,
         status: ProductStatus | None = None,
         include_deleted: bool = False,
+        search: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[list[ProductEntity], int]:
@@ -87,6 +88,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             .options(
                 selectinload(ProductModel.images),
                 selectinload(ProductModel.characteristics),
+                selectinload(ProductModel.skus).selectinload(SkuModel.images),
+                selectinload(ProductModel.skus).selectinload(
+                    SkuModel.characteristics
+                ),
             )
             .where(ProductModel.seller_id == seller_id)
         )
@@ -94,12 +99,18 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             query = query.where(ProductModel.status == status.value)
         if not include_deleted:
             query = query.where(ProductModel.deleted.is_(False))
+        if search:
+            query = query.where(ProductModel.title.ilike(f"%{search}%"))
         count_result = await self._session.execute(
             select(func.count()).select_from(query.subquery())
         )
-        result = await self._session.execute(query.limit(limit).offset(offset))
+        result = await self._session.execute(
+            query.order_by(ProductModel.created_at.desc(), ProductModel.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         return (
-            [self._to_entity(m) for m in result.scalars().all()],
+            [self._to_entity(m, load_skus=True) for m in result.scalars().all()],
             count_result.scalar_one(),
         )
 

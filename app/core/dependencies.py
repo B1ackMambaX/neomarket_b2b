@@ -21,7 +21,6 @@ from app.infrastructure.database.repositories.seller_repo import (
 from app.infrastructure.database.repositories.sku_repo import SQLAlchemySkuRepository
 from app.infrastructure.external.http_b2c_event_publisher import HttpB2cEventPublisher
 from app.infrastructure.external.moderation_client import HttpModerationClient
-from app.infrastructure.external.noop_event_publisher import NoopEventPublisher
 from app.services.inventory_service import InventoryService
 from app.services.product_service import ProductService
 from app.services.sku_service import SkuService
@@ -56,7 +55,10 @@ def get_inventory_service(
 ) -> InventoryService:
     return InventoryService(
         inventory_repo=SQLAlchemyInventoryRepository(db),
-        event_publisher=NoopEventPublisher(),
+        event_publisher=HttpB2cEventPublisher(
+            url=settings.B2C_URL,
+            service_key=settings.B2B_TO_B2C_KEY,
+        ),
     )
 
 

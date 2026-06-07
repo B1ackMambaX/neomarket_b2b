@@ -140,6 +140,8 @@ def _seller_product_short_response(product: ProductEntity) -> ProductShortRespon
             if product.images
             else None
         ),
+        skus_count=len(skus),
+        total_active_quantity=sum(sku.active_quantity for sku in skus),
     )
 
 
@@ -248,11 +250,13 @@ async def list_seller_products(
         ProductStatus | None, Query(alias="status")
     ] = None,
     include_deleted: bool = False,
+    search: str | None = None,
 ) -> ProductPaginatedResponse:
     products, total_count = await service.list_seller_products(
         seller_id=seller_id,
         status=product_status,
         include_deleted=include_deleted,
+        search=search,
         limit=limit,
         offset=offset,
     )

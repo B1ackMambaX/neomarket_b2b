@@ -24,6 +24,7 @@ class AbstractProductRepository(ABC):
         seller_id: UUID,
         status: ProductStatus | None = None,
         include_deleted: bool = False,
+        search: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[list[ProductEntity], int]: ...

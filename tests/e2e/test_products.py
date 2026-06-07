@@ -38,6 +38,9 @@ from app.infrastructure.database.models import (
     SkuModel,
 )
 from app.infrastructure.database.models.base import Base
+from app.infrastructure.database.repositories.product_repo import (
+    SQLAlchemyProductRepository,
+)
 from app.infrastructure.external.moderation_client import AbstractModerationClient
 from app.services.product_service import ProductService
 
@@ -95,6 +98,7 @@ class _ProductRepoStub(AbstractProductRepository):
         seller_id: UUID,
         status: ProductStatus | None = None,
         include_deleted: bool = False,
+        search: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[list[ProductEntity], int]:
@@ -104,6 +108,7 @@ class _ProductRepoStub(AbstractProductRepository):
             if product.seller_id == seller_id
             and (status is None or product.status == status)
             and (include_deleted or not product.deleted)
+            and (search is None or search.casefold() in product.title.casefold())
         ]
         return selected[offset : offset + limit], len(selected)
 
@@ -631,15 +636,16 @@ async def test_delete_others_product_returns_403() -> None:
     assert event_publisher.deleted_events == []
 
 
-@pytest.mark.asyncio
-async def test_deleted_product_not_in_seller_list() -> None:
+async def _list_seller_products(
+    products: list[ProductEntity],
+    seller_id: UUID,
+    query: str = "",
+) -> Response:
     from app.core.dependencies import get_product_service
     from app.main import app
 
-    seller_id = uuid4()
-    product = _make_moderated_product(seller_id)
     service = ProductService(
-        product_repo=_ProductRepoStub(product=product),
+        product_repo=_ProductRepoStub(products=products),
         seller_repo=_StubSellerRepo(seller_id),
         category_repo=_StubCategoryRepo(),
         moderation_client=_FakeModerationClient(),
@@ -649,20 +655,164 @@ async def test_deleted_product_not_in_seller_list() -> None:
     app.dependency_overrides[get_product_service] = lambda: service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        delete_response = await ac.delete(
-            f"/api/v1/products/{product.id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        list_response = await ac.get(
-            "/api/v1/products",
+        response = await ac.get(
+            f"/api/v1/products{query}",
             headers={"Authorization": f"Bearer {token}"},
         )
     _ = app.dependency_overrides.pop(get_product_service, None)
+    return response
 
-    assert delete_response.status_code == 204
-    assert list_response.status_code == 200
-    assert list_response.json()["items"] == []
-    assert list_response.json()["total_count"] == 0
+
+@pytest.mark.asyncio
+async def test_list_returns_only_own_products() -> None:
+    seller_id = uuid4()
+    own_product = _make_moderated_product(seller_id)
+    other_product = _make_moderated_product(uuid4())
+
+    response = await _list_seller_products(
+        [own_product, other_product],
+        seller_id,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["id"] for item in data["items"]] == [str(own_product.id)]
+    assert data["total_count"] == 1
+    assert data["items"][0]["skus_count"] == 1
+    assert data["items"][0]["total_active_quantity"] == 10
+
+
+@pytest.mark.asyncio
+async def test_idor_query_param_seller_id_ignored() -> None:
+    seller_id = uuid4()
+    own_product = _make_moderated_product(seller_id)
+    other_seller_id = uuid4()
+    other_product = _make_moderated_product(other_seller_id)
+
+    response = await _list_seller_products(
+        [own_product, other_product],
+        seller_id,
+        query=f"?seller_id={other_seller_id}",
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [
+        str(own_product.id)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deleted_products_visible_with_deleted_flag() -> None:
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+    product.deleted = True
+
+    response = await _list_seller_products(
+        [product],
+        seller_id,
+        query="?include_deleted=true",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_status_filter_works_correctly() -> None:
+    seller_id = uuid4()
+    blocked_product = _make_moderated_product(seller_id)
+    blocked_product.status = ProductStatus.BLOCKED
+    moderated_product = _make_moderated_product(seller_id)
+
+    response = await _list_seller_products(
+        [blocked_product, moderated_product],
+        seller_id,
+        query="?status=BLOCKED",
+    )
+
+    assert response.status_code == 200
+    assert [item["status"] for item in response.json()["items"]] == ["BLOCKED"]
+
+
+@pytest.mark.asyncio
+async def test_search_by_title_case_insensitive() -> None:
+    seller_id = uuid4()
+    matching_product = _make_moderated_product(seller_id)
+    matching_product.title = "iPhone 15 Pro"
+    other_product = _make_moderated_product(seller_id)
+    other_product.title = "Android Phone"
+
+    response = await _list_seller_products(
+        [matching_product, other_product],
+        seller_id,
+        query="?search=IPHONE",
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [
+        str(matching_product.id)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seller_list_real_repo_filters_owner_and_loads_skus(
+    real_db_schema: None,
+    seller_id: UUID,
+) -> None:
+    _ = real_db_schema
+    other_seller_id = uuid4()
+    own_product_id = uuid4()
+    other_product_id = uuid4()
+
+    async with AsyncSessionFactory() as session:
+        session.add_all(
+            [
+                SellerModel(id=seller_id, company_name="Own Seller"),
+                SellerModel(id=other_seller_id, company_name="Other Seller"),
+                ProductModel(
+                    id=own_product_id,
+                    seller_id=seller_id,
+                    category_id=uuid4(),
+                    title="Seller Cabinet Product",
+                    status=ProductStatus.BLOCKED.value,
+                    deleted=True,
+                ),
+                ProductModel(
+                    id=other_product_id,
+                    seller_id=other_seller_id,
+                    category_id=uuid4(),
+                    title="Seller Cabinet Product",
+                    status=ProductStatus.BLOCKED.value,
+                ),
+                SkuModel(
+                    product_id=own_product_id,
+                    name="First",
+                    price=100,
+                    active_quantity=7,
+                ),
+                SkuModel(
+                    product_id=own_product_id,
+                    name="Second",
+                    price=200,
+                    active_quantity=5,
+                ),
+            ]
+        )
+        await session.commit()
+
+        products, total_count = await SQLAlchemyProductRepository(
+            session
+        ).list_by_seller(
+            seller_id=seller_id,
+            status=ProductStatus.BLOCKED,
+            include_deleted=True,
+            search="CABINET",
+        )
+
+    assert total_count == 1
+    assert [product.id for product in products] == [own_product_id]
+    assert len(products[0].skus) == 2
+    assert sum(sku.active_quantity for sku in products[0].skus) == 12
 
 
 @pytest.mark.asyncio

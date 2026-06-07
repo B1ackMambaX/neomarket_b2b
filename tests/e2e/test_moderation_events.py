@@ -45,7 +45,9 @@ class _ModerationProductRepo(AbstractProductRepository):
         return product
 
     @override
-    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
+    async def get_with_skus_and_reports(
+        self, product_id: UUID, *, for_update: bool = False
+    ) -> ProductEntity | None:
         return await self.get_by_id(product_id)
 
     @override
@@ -53,10 +55,11 @@ class _ModerationProductRepo(AbstractProductRepository):
         self,
         seller_id: UUID,
         status: ProductStatus | None = None,
+        include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[ProductEntity]:
-        return []
+    ) -> tuple[list[ProductEntity], int]:
+        return [], 0
 
     @override
     async def list_by_status(
@@ -146,6 +149,12 @@ class _Publisher(AbstractEventPublisher):
         self, product_id: UUID, sku_ids: list[UUID], *, hard_block: bool = False
     ) -> None:
         self.blocked_events.append((product_id, sku_ids))
+
+    @override
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None:
+        pass
 
 
 def _make_product(status: ProductStatus = ProductStatus.ON_MODERATION) -> ProductEntity:

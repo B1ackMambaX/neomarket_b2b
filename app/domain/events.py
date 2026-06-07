@@ -11,3 +11,8 @@ class AbstractEventPublisher(ABC):
     async def publish_product_blocked(
         self, product_id: UUID, sku_ids: list[UUID], *, hard_block: bool = False
     ) -> None: ...
+
+    @abstractmethod
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None: ...

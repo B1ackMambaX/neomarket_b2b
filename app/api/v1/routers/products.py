@@ -11,6 +11,7 @@ from app.api.v1.dependencies.auth import (
 from app.core.dependencies import get_product_service
 from app.domain.entities.product import ProductEntity
 from app.domain.entities.sku import SkuEntity
+from app.domain.value_objects.product_status import ProductStatus
 from app.schemas.product import (
     BlockingReasonInProductResponse,
     CategoryInProductResponse,
@@ -19,11 +20,13 @@ from app.schemas.product import (
     ProductCreate,
     ProductDetailResponse,
     ProductImageResponse,
+    ProductPaginatedResponse,
     ProductPublicBatchRequest,
     ProductPublicPaginatedResponse,
     ProductPublicResponse,
     ProductPublicShortResponse,
     ProductResponse,
+    ProductShortResponse,
     ProductUpdate,
 )
 from app.schemas.sku import SKUImageResponse, SKUPublicResponse, SKUResponse
@@ -121,6 +124,25 @@ def _public_product_short_response(
     )
 
 
+def _seller_product_short_response(product: ProductEntity) -> ProductShortResponse:
+    skus = _product_skus(product)
+    return ProductShortResponse(
+        id=product.id,
+        title=product.title,
+        slug=product.slug,
+        status=product.status,
+        category_id=product.category_id,
+        deleted=product.deleted,
+        created_at=product.created_at,
+        min_price=min((sku.price for sku in skus), default=None),
+        cover_image=(
+            min(product.images, key=lambda image: image.ordering).url
+            if product.images
+            else None
+        ),
+    )
+
+
 def _product_response(product: ProductEntity) -> ProductResponse:
     return ProductResponse(
         id=product.id,
@@ -208,6 +230,38 @@ async def batch_catalog_products(
         offset=0,
     )
     return [_public_product_response(product) for product, _ in items]
+
+
+@router.get(
+    "",
+    response_model=ProductPaginatedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Список своих товаров",
+    operation_id="listMyProducts",
+)
+async def list_seller_products(
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[ProductService, Depends(get_product_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    product_status: Annotated[
+        ProductStatus | None, Query(alias="status")
+    ] = None,
+    include_deleted: bool = False,
+) -> ProductPaginatedResponse:
+    products, total_count = await service.list_seller_products(
+        seller_id=seller_id,
+        status=product_status,
+        include_deleted=include_deleted,
+        limit=limit,
+        offset=offset,
+    )
+    return ProductPaginatedResponse(
+        items=[_seller_product_short_response(product) for product in products],
+        total_count=total_count,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(

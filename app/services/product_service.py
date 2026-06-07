@@ -49,7 +49,7 @@ class ProductService:
         self._seller_repo: AbstractSellerRepository = seller_repo
         self._category_repo: AbstractCategoryRepository = category_repo
         self._event_publisher: AbstractEventPublisher | None = event_publisher
-        self._moderation_client: AbstractModerationClient = moderation_client  # type: ignore[assignment]
+        self._moderation_client: AbstractModerationClient | None = moderation_client
 
     async def create_product(
         self, seller_id: UUID, payload: ProductCreate
@@ -122,14 +122,46 @@ class ProductService:
         return saved_product
 
     async def delete_product(self, seller_id: UUID, product_id: UUID) -> None:
-        product = await self._product_repo.get_or_raise(product_id)
-        if product.seller_id != seller_id:
+        product = await self._product_repo.get_with_skus_and_reports(
+            product_id, for_update=True
+        )
+        if product is None:
             raise NotFoundException("Product not found")
+        if product.seller_id != seller_id:
+            raise NotOwnerException(
+                "Product does not belong to the authenticated seller"
+            )
+        if product.deleted:
+            raise ValidationException("Product already deleted")
         if product.status == ProductStatus.HARD_BLOCKED:
             raise ForbiddenException("Cannot delete hard-blocked product")
+
         product.deleted = True
         product.updated_at = utc_now()
-        _ = await self._product_repo.save(product)
+        saved_product = await self._product_repo.save(product)
+        if self._moderation_client is not None:
+            await self._moderation_client.send_product_deleted(saved_product)
+        if self._event_publisher is not None:
+            await self._event_publisher.publish_product_deleted(
+                product_id=saved_product.id,
+                sku_ids=[sku.id for sku in cast(list[SkuEntity], saved_product.skus)],
+            )
+
+    async def list_seller_products(
+        self,
+        seller_id: UUID,
+        status: ProductStatus | None = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProductEntity], int]:
+        return await self._product_repo.list_by_seller(
+            seller_id=seller_id,
+            status=status,
+            include_deleted=include_deleted,
+            limit=limit,
+            offset=offset,
+        )
 
     async def get_product(
         self, seller_id: UUID | None, product_id: UUID

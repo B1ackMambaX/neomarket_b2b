@@ -65,9 +65,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         self,
         seller_id: UUID,
         status: ProductStatus | None = None,
+        include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[ProductEntity]:
+    ) -> tuple[list[ProductEntity], int]:
         query = (
             select(ProductModel)
             .options(
@@ -78,9 +79,16 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         )
         if status is not None:
             query = query.where(ProductModel.status == status.value)
-        query = query.limit(limit).offset(offset)
-        result = await self._session.execute(query)
-        return [self._to_entity(m) for m in result.scalars().all()]
+        if not include_deleted:
+            query = query.where(ProductModel.deleted.is_(False))
+        count_result = await self._session.execute(
+            select(func.count()).select_from(query.subquery())
+        )
+        result = await self._session.execute(query.limit(limit).offset(offset))
+        return (
+            [self._to_entity(m) for m in result.scalars().all()],
+            count_result.scalar_one(),
+        )
 
     async def list_by_status(
         self,
@@ -167,8 +175,10 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             return False
         return True
 
-    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
-        result = await self._session.execute(
+    async def get_with_skus_and_reports(
+        self, product_id: UUID, *, for_update: bool = False
+    ) -> ProductEntity | None:
+        query = (
             select(ProductModel)
             .options(
                 selectinload(ProductModel.images),
@@ -181,6 +191,9 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             )
             .where(ProductModel.id == product_id)
         )
+        if for_update:
+            query = query.with_for_update()
+        result = await self._session.execute(query)
         model = result.scalar_one_or_none()
         return (
             self._to_entity(model, load_skus=True, load_reports=True) if model else None

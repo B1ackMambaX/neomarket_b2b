@@ -131,6 +131,25 @@ class ProductPublicShortResponse(BaseModel):
     created_at: datetime
 
 
+class ProductShortResponse(BaseModel):
+    id: UUID
+    title: str
+    slug: str | None
+    status: ProductStatus
+    category_id: UUID
+    deleted: bool
+    created_at: datetime
+    min_price: int | None
+    cover_image: str | None
+
+
+class ProductPaginatedResponse(BaseModel):
+    items: list[ProductShortResponse]
+    total_count: int
+    limit: int
+    offset: int
+
+
 class ProductPublicPaginatedResponse(BaseModel):
     items: list[ProductPublicShortResponse]
     total_count: int

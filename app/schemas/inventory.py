@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -56,4 +57,15 @@ class UnreserveRequest(BaseModel):
 class UnreserveResponse(BaseModel):
     order_id: UUID
     status: str = "UNRESERVED"
+    processed_at: datetime
+
+
+class FulfillRequest(BaseModel):
+    order_id: UUID
+    items: list[InventoryItemRequest] = Field(min_length=1)
+
+
+class FulfillResponse(BaseModel):
+    order_id: UUID
+    status: Literal["FULFILLED"]
     processed_at: datetime

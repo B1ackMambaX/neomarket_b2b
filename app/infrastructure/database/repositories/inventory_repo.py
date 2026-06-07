@@ -2,10 +2,11 @@ from datetime import datetime, timezone
 from typing import override
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.inventory import (
+    FulfillResult,
     ReservationItemResult,
     ReservationResult,
     UnreserveResult,
@@ -19,6 +20,7 @@ from app.domain.exceptions import (
 )
 from app.domain.repositories.inventory_repo import AbstractInventoryRepository
 from app.infrastructure.database.models.reservation import (
+    FulfillOperationModel,
     ReserveOperationModel,
     SerializedInventoryItem,
     UnreserveOperationModel,
@@ -204,3 +206,73 @@ class SQLAlchemyInventoryRepository(AbstractInventoryRepository):
         await self._session.flush()
 
         return UnreserveResult(order_id=order_id, processed_at=processed_at)
+
+    @override
+    async def fulfill(
+        self,
+        order_id: UUID,
+        items: list[tuple[UUID, int]],
+    ) -> FulfillResult:
+        normalized_items = _normalize_items(items)
+        requested_items = _serialize_items(normalized_items)
+        existing = await self._session.get(FulfillOperationModel, order_id)
+        if existing is not None:
+            return FulfillResult(
+                order_id=order_id,
+                processed_at=existing.processed_at,
+                from_cache=True,
+            )
+
+        # Serialize concurrent retries even when their SKU sets differ.
+        advisory_lock_key = order_id.int & ((1 << 63) - 1)
+        _ = await self._session.execute(
+            select(func.pg_advisory_xact_lock(advisory_lock_key))
+        )
+        existing = await self._session.get(FulfillOperationModel, order_id)
+        if existing is not None:
+            return FulfillResult(
+                order_id=order_id,
+                processed_at=existing.processed_at,
+                from_cache=True,
+            )
+
+        sku_ids = [sku_id for sku_id, _ in normalized_items]
+        rows = await self._session.execute(
+            select(SkuModel)
+            .where(SkuModel.id.in_(sku_ids))
+            .with_for_update()
+            .order_by(SkuModel.id)
+        )
+        sku_map = {sku.id: sku for sku in rows.scalars().all()}
+
+        failed: list[FailedReservedItem] = []
+        for sku_id, qty in normalized_items:
+            sku = sku_map.get(sku_id)
+            reserved = sku.reserved_quantity if sku else 0
+            if reserved < qty:
+                failed.append(
+                    {
+                        "sku_id": sku_id,
+                        "requested": qty,
+                        "reserved": reserved,
+                        "reason": "INSUFFICIENT_RESERVED",
+                    }
+                )
+
+        if failed:
+            raise InsufficientReservedException(failed)
+
+        processed_at = datetime.now(timezone.utc)
+        for sku_id, qty in normalized_items:
+            sku_map[sku_id].reserved_quantity -= qty
+
+        self._session.add(
+            FulfillOperationModel(
+                order_id=order_id,
+                items=requested_items,
+                processed_at=processed_at,
+            )
+        )
+        await self._session.flush()
+
+        return FulfillResult(order_id=order_id, processed_at=processed_at)

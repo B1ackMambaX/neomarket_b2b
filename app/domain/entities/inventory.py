@@ -24,3 +24,10 @@ class UnreserveResult:
     order_id: UUID
     processed_at: datetime
     from_cache: bool = False
+
+
+@dataclass
+class FulfillResult:
+    order_id: UUID
+    processed_at: datetime
+    from_cache: bool = False

@@ -42,3 +42,13 @@ class UnreserveOperationModel(Base):
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class FulfillOperationModel(Base):
+    __tablename__: str = "fulfill_operations"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    items: Mapped[list[SerializedInventoryItem]] = mapped_column(JSON, nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

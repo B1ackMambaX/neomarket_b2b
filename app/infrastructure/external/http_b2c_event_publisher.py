@@ -59,3 +59,29 @@ class HttpB2cEventPublisher(AbstractEventPublisher):
             logger.exception(
                 "Failed to publish %s to B2C for product %s", event_type, product_id
             )
+
+    @override
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None:
+        body = {
+            "event_type": "PRODUCT_DELETED",
+            "idempotency_key": str(uuid4()),
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "product_id": str(product_id),
+                "sku_ids": [str(sku_id) for sku_id in sku_ids],
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    f"{self._url}/api/v1/b2b/events",
+                    json=body,
+                    headers={"X-Service-Key": self._service_key},
+                )
+                _ = response.raise_for_status()
+        except Exception:
+            logger.exception(
+                "Failed to publish PRODUCT_DELETED to B2C for product %s", product_id
+            )

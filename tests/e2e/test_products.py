@@ -25,6 +25,7 @@ from app.domain.entities.product import (
 )
 from app.domain.entities.seller import SellerEntity
 from app.domain.entities.sku import SkuEntity, SkuImageEntity
+from app.domain.events import AbstractEventPublisher
 from app.domain.exceptions import NotFoundException, ValidationException
 from app.domain.repositories.category_repo import AbstractCategoryRepository
 from app.domain.repositories.product_repo import AbstractProductRepository
@@ -79,7 +80,9 @@ class _ProductRepoStub(AbstractProductRepository):
         return product
 
     @override
-    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
+    async def get_with_skus_and_reports(
+        self, product_id: UUID, *, for_update: bool = False
+    ) -> ProductEntity | None:
         return self._find(product_id)
 
     @override
@@ -87,16 +90,18 @@ class _ProductRepoStub(AbstractProductRepository):
         self,
         seller_id: UUID,
         status: ProductStatus | None = None,
+        include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[ProductEntity]:
+    ) -> tuple[list[ProductEntity], int]:
         selected = [
             product
             for product in self._products
             if product.seller_id == seller_id
             and (status is None or product.status == status)
+            and (include_deleted or not product.deleted)
         ]
-        return selected[offset : offset + limit]
+        return selected[offset : offset + limit], len(selected)
 
     @override
     async def list_by_status(
@@ -224,6 +229,7 @@ class _FakeModerationClient(AbstractModerationClient):
         self.edited_events: list[
             tuple[ProductEntity, dict[str, object], dict[str, object]]
         ] = []
+        self.deleted_events: list[ProductEntity] = []
 
     @override
     async def send_product_created(self, product: ProductEntity) -> None:
@@ -237,6 +243,31 @@ class _FakeModerationClient(AbstractModerationClient):
         json_after: dict[str, object],
     ) -> None:
         self.edited_events.append((product, json_before, json_after))
+
+    @override
+    async def send_product_deleted(self, product: ProductEntity) -> None:
+        self.deleted_events.append(product)
+
+
+class _FakeEventPublisher(AbstractEventPublisher):
+    def __init__(self) -> None:
+        self.deleted_events: list[tuple[UUID, list[UUID]]] = []
+
+    @override
+    async def publish_sku_out_of_stock(self, sku_id: UUID) -> None:
+        pass
+
+    @override
+    async def publish_product_blocked(
+        self, product_id: UUID, sku_ids: list[UUID], *, hard_block: bool = False
+    ) -> None:
+        pass
+
+    @override
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None:
+        self.deleted_events.append((product_id, sku_ids))
 
 
 def _product_skus(product: ProductEntity) -> list[SkuEntity]:
@@ -487,6 +518,147 @@ async def test_edit_others_product_returns_403() -> None:
     assert response.json()["code"] == "NOT_OWNER"
     assert repo.saved == []
     assert moderation_client.edited_events == []
+
+
+async def _delete_product(
+    product: ProductEntity,
+    token_seller_id: UUID,
+) -> tuple[
+    Response,
+    _ProductRepoStub,
+    _FakeModerationClient,
+    _FakeEventPublisher,
+    ProductService,
+]:
+    from app.core.dependencies import get_product_service
+    from app.main import app
+
+    repo = _ProductRepoStub(product=product)
+    moderation_client = _FakeModerationClient()
+    event_publisher = _FakeEventPublisher()
+    service = ProductService(
+        product_repo=repo,
+        seller_repo=_StubSellerRepo(token_seller_id),
+        category_repo=_StubCategoryRepo(),
+        moderation_client=moderation_client,
+        event_publisher=event_publisher,
+    )
+    token = create_access_token({"sub": str(token_seller_id)}, settings.SECRET_KEY)
+    app.dependency_overrides[get_product_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/products/{product.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    _ = app.dependency_overrides.pop(get_product_service, None)
+    return response, repo, moderation_client, event_publisher, service
+
+
+@pytest.mark.asyncio
+async def test_delete_sets_deleted_true() -> None:
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+
+    response, repo, _, _, _ = await _delete_product(product, seller_id)
+
+    assert response.status_code == 204
+    assert repo.saved[0].deleted is True
+
+
+@pytest.mark.asyncio
+async def test_delete_emits_event_to_moderation() -> None:
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+
+    response, _, moderation_client, _, _ = await _delete_product(product, seller_id)
+
+    assert response.status_code == 204
+    assert moderation_client.deleted_events == [product]
+
+
+@pytest.mark.asyncio
+async def test_delete_emits_product_deleted_to_b2c() -> None:
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+    expected_sku_ids = [sku.id for sku in _product_skus(product)]
+
+    response, _, _, event_publisher, _ = await _delete_product(product, seller_id)
+
+    assert response.status_code == 204
+    assert event_publisher.deleted_events == [(product.id, expected_sku_ids)]
+
+
+@pytest.mark.asyncio
+async def test_delete_already_deleted_returns_400() -> None:
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+    product.deleted = True
+
+    response, repo, moderation_client, event_publisher, _ = await _delete_product(
+        product, seller_id
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "Product already deleted",
+    }
+    assert repo.saved == []
+    assert moderation_client.deleted_events == []
+    assert event_publisher.deleted_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_others_product_returns_403() -> None:
+    product = _make_moderated_product(uuid4())
+
+    response, repo, moderation_client, event_publisher, _ = await _delete_product(
+        product, uuid4()
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "NOT_OWNER",
+        "message": "Product does not belong to the authenticated seller",
+    }
+    assert repo.saved == []
+    assert moderation_client.deleted_events == []
+    assert event_publisher.deleted_events == []
+
+
+@pytest.mark.asyncio
+async def test_deleted_product_not_in_seller_list() -> None:
+    from app.core.dependencies import get_product_service
+    from app.main import app
+
+    seller_id = uuid4()
+    product = _make_moderated_product(seller_id)
+    service = ProductService(
+        product_repo=_ProductRepoStub(product=product),
+        seller_repo=_StubSellerRepo(seller_id),
+        category_repo=_StubCategoryRepo(),
+        moderation_client=_FakeModerationClient(),
+        event_publisher=_FakeEventPublisher(),
+    )
+    token = create_access_token({"sub": str(seller_id)}, settings.SECRET_KEY)
+    app.dependency_overrides[get_product_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        delete_response = await ac.delete(
+            f"/api/v1/products/{product.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        list_response = await ac.get(
+            "/api/v1/products",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    _ = app.dependency_overrides.pop(get_product_service, None)
+
+    assert delete_response.status_code == 204
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == []
+    assert list_response.json()["total_count"] == 0
 
 
 @pytest.mark.asyncio

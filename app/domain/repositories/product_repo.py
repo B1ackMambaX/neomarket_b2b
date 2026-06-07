@@ -20,9 +20,10 @@ class AbstractProductRepository(ABC):
         self,
         seller_id: UUID,
         status: ProductStatus | None = None,
+        include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[ProductEntity]: ...
+    ) -> tuple[list[ProductEntity], int]: ...
 
     @abstractmethod
     async def list_by_status(
@@ -34,7 +35,7 @@ class AbstractProductRepository(ABC):
 
     @abstractmethod
     async def get_with_skus_and_reports(
-        self, product_id: UUID
+        self, product_id: UUID, *, for_update: bool = False
     ) -> ProductEntity | None: ...
 
     @abstractmethod

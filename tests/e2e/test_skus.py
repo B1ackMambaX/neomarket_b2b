@@ -101,7 +101,9 @@ class _StubProductRepo(AbstractProductRepository):
         return self._product
 
     @override
-    async def get_with_skus_and_reports(self, product_id: UUID) -> ProductEntity | None:
+    async def get_with_skus_and_reports(
+        self, product_id: UUID, *, for_update: bool = False
+    ) -> ProductEntity | None:
         return self._product
 
     @override
@@ -109,10 +111,11 @@ class _StubProductRepo(AbstractProductRepository):
         self,
         seller_id: UUID,
         status: ProductStatus | None = None,
+        include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[ProductEntity]:
-        return []
+    ) -> tuple[list[ProductEntity], int]:
+        return [], 0
 
     @override
     async def list_by_status(
@@ -169,6 +172,10 @@ class _FakeModerationClient(AbstractModerationClient):
         json_after: dict[str, object],
     ) -> None:
         self.edited_events.append((product, json_before, json_after))
+
+    @override
+    async def send_product_deleted(self, product: ProductEntity) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------

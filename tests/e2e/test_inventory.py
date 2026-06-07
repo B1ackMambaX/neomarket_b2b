@@ -176,6 +176,12 @@ class _StubEventPublisher(AbstractEventPublisher):
     ) -> None:
         pass
 
+    @override
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Helpers

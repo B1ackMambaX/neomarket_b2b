@@ -28,6 +28,9 @@ class AbstractModerationClient(ABC):
         json_after: dict[str, object],
     ) -> None: ...
 
+    @abstractmethod
+    async def send_product_deleted(self, product: ProductEntity) -> None: ...
+
 
 def moderation_snapshot(
     product: ProductEntity,
@@ -152,4 +155,27 @@ class HttpModerationClient(AbstractModerationClient):
         except Exception:
             logger.exception(
                 "Failed to send EDITED event to Moderation for product %s", product.id
+            )
+
+    @override
+    async def send_product_deleted(self, product: ProductEntity) -> None:
+        try:
+            payload = {
+                "event_type": "PRODUCT_DELETED",
+                "idempotency_key": str(
+                    uuid5(NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED")
+                ),
+                "occurred_at": _event_timestamp(),
+                "payload": {"product_id": str(product.id)},
+            }
+            response = await self._http_client.post(
+                f"{self._url}/api/v1/b2b/events",
+                json=payload,
+                headers={"X-Service-Key": self._service_key},
+            )
+            _ = response.raise_for_status()
+        except Exception:
+            logger.exception(
+                "Failed to send PRODUCT_DELETED event to Moderation for product %s",
+                product.id,
             )

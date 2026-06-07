@@ -2,7 +2,7 @@ from enum import Enum
 
 
 class InvoiceStatus(str, Enum):
-    DRAFT = "DRAFT"
-    SENT = "SENT"
+    CREATED = "CREATED"
+    PARTIALLY_ACCEPTED = "PARTIALLY_ACCEPTED"
     ACCEPTED = "ACCEPTED"
-    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"

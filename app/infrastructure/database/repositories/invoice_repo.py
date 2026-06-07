@@ -54,8 +54,10 @@ class SQLAlchemyInvoiceRepository(AbstractInvoiceRepository):
         return [self._to_entity(m) for m in result.scalars().all()]
 
     async def save(self, invoice: InvoiceEntity) -> InvoiceEntity:
-        model = await self._session.merge(self._to_model(invoice))
+        model = self._to_model(invoice)
+        self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model, attribute_names=["items"])
         return self._to_entity(model)
 
     def _to_entity(self, model: InvoiceModel) -> InvoiceEntity:
@@ -66,6 +68,7 @@ class SQLAlchemyInvoiceRepository(AbstractInvoiceRepository):
                 sku_id=item.sku_id,
                 quantity=item.quantity,
                 price_per_unit=item.price_per_unit,
+                accepted_quantity=item.accepted_quantity,
                 created_at=item.created_at,
             )
             for item in getattr(model, "items", [])
@@ -76,7 +79,9 @@ class SQLAlchemyInvoiceRepository(AbstractInvoiceRepository):
             invoice_number=model.invoice_number,
             status=InvoiceStatus(model.status),
             created_at=model.created_at,
+            updated_at=model.updated_at,
             accepted_at=model.accepted_at,
+            accepted_by=model.accepted_by,
             items=items,
         )
 
@@ -86,7 +91,10 @@ class SQLAlchemyInvoiceRepository(AbstractInvoiceRepository):
             seller_id=entity.seller_id,
             invoice_number=entity.invoice_number,
             status=entity.status.value,
+            created_at=entity.created_at,
+            updated_at=entity.updated_at,
             accepted_at=entity.accepted_at,
+            accepted_by=entity.accepted_by,
         )
         model.items = [
             InvoiceItemModel(
@@ -95,6 +103,8 @@ class SQLAlchemyInvoiceRepository(AbstractInvoiceRepository):
                 sku_id=item.sku_id,
                 quantity=item.quantity,
                 price_per_unit=item.price_per_unit,
+                accepted_quantity=item.accepted_quantity,
+                created_at=item.created_at,
             )
             for item in entity.items
         ]

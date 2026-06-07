@@ -55,6 +55,19 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
         model = result.scalar_one_or_none()
         return self._to_entity(model) if model else None
 
+    async def get_many_by_ids(self, product_ids: list[UUID]) -> list[ProductEntity]:
+        if not product_ids:
+            return []
+        result = await self._session.execute(
+            select(ProductModel)
+            .options(
+                selectinload(ProductModel.images),
+                selectinload(ProductModel.characteristics),
+            )
+            .where(ProductModel.id.in_(product_ids))
+        )
+        return [self._to_entity(m) for m in result.scalars().all()]
+
     async def get_or_raise(self, product_id: UUID) -> ProductEntity:
         entity = await self.get_by_id(product_id)
         if entity is None:

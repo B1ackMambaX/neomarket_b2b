@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from app.domain.exceptions import DomainException
 from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.invoice_status import InvoiceStatus
 
@@ -13,6 +12,7 @@ class InvoiceItemEntity:
     sku_id: UUID
     quantity: int
     price_per_unit: int  # в копейках
+    accepted_quantity: int = 0
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -26,9 +26,11 @@ class InvoiceEntity:
     seller_id: UUID
     invoice_number: str
     id: UUID = field(default_factory=uuid4)
-    status: InvoiceStatus = InvoiceStatus.DRAFT
+    status: InvoiceStatus = InvoiceStatus.CREATED
     created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
     accepted_at: datetime | None = None
+    accepted_by: UUID | None = None
     items: list[InvoiceItemEntity] = field(default_factory=list)
 
     @classmethod
@@ -38,21 +40,3 @@ class InvoiceEntity:
     @property
     def total_amount(self) -> int:
         return sum(item.total for item in self.items)
-
-    def send(self) -> None:
-        if self.status != InvoiceStatus.DRAFT:
-            raise DomainException(f"Cannot send invoice in status {self.status}")
-        if not self.items:
-            raise DomainException("Cannot send invoice with no items")
-        self.status = InvoiceStatus.SENT
-
-    def accept(self) -> None:
-        if self.status != InvoiceStatus.SENT:
-            raise DomainException(f"Cannot accept invoice in status {self.status}")
-        self.status = InvoiceStatus.ACCEPTED
-        self.accepted_at = utc_now()
-
-    def reject(self) -> None:
-        if self.status != InvoiceStatus.SENT:
-            raise DomainException(f"Cannot reject invoice in status {self.status}")
-        self.status = InvoiceStatus.REJECTED

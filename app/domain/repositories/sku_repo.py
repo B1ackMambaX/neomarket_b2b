@@ -10,6 +10,9 @@ class AbstractSkuRepository(ABC):
     async def get_by_id(self, sku_id: UUID) -> SkuEntity | None: ...
 
     @abstractmethod
+    async def get_many_by_ids(self, sku_ids: list[UUID]) -> list[SkuEntity]: ...
+
+    @abstractmethod
     async def get_by_id_for_update(self, sku_id: UUID) -> SkuEntity | None: ...
 
     @abstractmethod

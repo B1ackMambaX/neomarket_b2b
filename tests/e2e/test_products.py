@@ -69,6 +69,10 @@ class _ProductRepoStub(AbstractProductRepository):
         return self._find(product_id)
 
     @override
+    async def get_many_by_ids(self, product_ids: list[UUID]) -> list[ProductEntity]:
+        return [p for p in self._products if p.id in product_ids]
+
+    @override
     async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:
         return self._find(product_id)
 

@@ -43,6 +43,19 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
         model = result.scalar_one_or_none()
         return self._to_entity(model) if model else None
 
+    async def get_many_by_ids(self, sku_ids: list[UUID]) -> list[SkuEntity]:
+        if not sku_ids:
+            return []
+        result = await self._session.execute(
+            select(SkuModel)
+            .options(
+                selectinload(SkuModel.images),
+                selectinload(SkuModel.characteristics),
+            )
+            .where(SkuModel.id.in_(sku_ids))
+        )
+        return [self._to_entity(m) for m in result.scalars().all()]
+
     async def get_or_raise(self, sku_id: UUID) -> SkuEntity:
         entity = await self.get_by_id(sku_id)
         if entity is None:

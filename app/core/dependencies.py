@@ -47,6 +47,7 @@ def get_product_service(db: Annotated[AsyncSession, Depends(get_db)]) -> Product
             url=settings.B2C_URL,
             service_key=settings.B2B_TO_B2C_KEY,
         ),
+        moderation_client=get_moderation_client(),
     )
 
 

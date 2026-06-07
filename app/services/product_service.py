@@ -14,6 +14,7 @@ from app.domain.events import AbstractEventPublisher
 from app.domain.exceptions import (
     ForbiddenException,
     NotFoundException,
+    NotOwnerException,
     ValidationException,
 )
 from app.domain.repositories.category_repo import AbstractCategoryRepository
@@ -21,6 +22,10 @@ from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.seller_repo import AbstractSellerRepository
 from app.domain.utils.datetime import utc_now
 from app.domain.value_objects.product_status import ProductStatus
+from app.infrastructure.external.moderation_client import (
+    AbstractModerationClient,
+    moderation_snapshot,
+)
 from app.schemas.product import ModerationEventRequest, ProductCreate, ProductUpdate
 
 
@@ -38,11 +43,13 @@ class ProductService:
         seller_repo: AbstractSellerRepository,
         category_repo: AbstractCategoryRepository,
         event_publisher: AbstractEventPublisher | None = None,
+        moderation_client: AbstractModerationClient | None = None,
     ) -> None:
         self._product_repo: AbstractProductRepository = product_repo
         self._seller_repo: AbstractSellerRepository = seller_repo
         self._category_repo: AbstractCategoryRepository = category_repo
         self._event_publisher: AbstractEventPublisher | None = event_publisher
+        self._moderation_client: AbstractModerationClient = moderation_client  # type: ignore[assignment]
 
     async def create_product(
         self, seller_id: UUID, payload: ProductCreate
@@ -80,11 +87,16 @@ class ProductService:
         product_id: UUID,
         payload: ProductUpdate,
     ) -> ProductEntity:
-        product = await self._product_repo.get_or_raise(product_id)
-        if product.seller_id != seller_id:
+        product = await self._product_repo.get_by_id_for_update(product_id)
+        if product is None:
             raise NotFoundException("Product not found")
+        if product.seller_id != seller_id:
+            raise NotOwnerException(
+                "Product does not belong to the authenticated seller"
+            )
         if product.status == ProductStatus.HARD_BLOCKED:
             raise ForbiddenException("Cannot edit hard-blocked product")
+        json_before = moderation_snapshot(product)
         if payload.title is not None:
             product.title = payload.title
             product.slug = _slugify(payload.title)
@@ -98,8 +110,16 @@ class ProductService:
                 CharacteristicEntity(name=c.name, value=c.value)
                 for c in payload.characteristics
             ]
+        should_publish_edited = product.resubmit_after_edit()
         product.updated_at = utc_now()
-        return await self._product_repo.save(product)
+        saved_product = await self._product_repo.save(product)
+        if should_publish_edited and self._moderation_client is not None:
+            await self._moderation_client.send_product_edited(
+                saved_product,
+                json_before=json_before,
+                json_after=moderation_snapshot(saved_product),
+            )
+        return saved_product
 
     async def delete_product(self, seller_id: UUID, product_id: UUID) -> None:
         product = await self._product_repo.get_or_raise(product_id)

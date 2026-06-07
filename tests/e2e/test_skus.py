@@ -38,17 +38,28 @@ from app.services.sku_service import SkuService
 
 
 class _StubSkuRepo(AbstractSkuRepository):
-    def __init__(self, existing_count: int = 0) -> None:
+    def __init__(
+        self,
+        existing_count: int = 0,
+        existing_sku: SkuEntity | None = None,
+    ) -> None:
         self._count: int = existing_count
+        self._existing_sku: SkuEntity | None = existing_sku
         self.saved: list[SkuEntity] = []
 
     @override
     async def get_by_id(self, sku_id: UUID) -> SkuEntity | None:
-        return None
+        return self._existing_sku
+
+    @override
+    async def get_by_id_for_update(self, sku_id: UUID) -> SkuEntity | None:
+        return self._existing_sku
 
     @override
     async def get_or_raise(self, sku_id: UUID) -> SkuEntity:
-        raise NotFoundException(f"SKU {sku_id} not found")
+        if self._existing_sku is None:
+            raise NotFoundException(f"SKU {sku_id} not found")
+        return self._existing_sku
 
     @override
     async def list_by_product(
@@ -142,10 +153,22 @@ class _StubProductRepo(AbstractProductRepository):
 class _FakeModerationClient(AbstractModerationClient):
     def __init__(self) -> None:
         self.events: list[ProductEntity] = []
+        self.edited_events: list[
+            tuple[ProductEntity, dict[str, object], dict[str, object]]
+        ] = []
 
     @override
     async def send_product_created(self, product: ProductEntity) -> None:
         self.events.append(product)
+
+    @override
+    async def send_product_edited(
+        self,
+        product: ProductEntity,
+        json_before: dict[str, object],
+        json_after: dict[str, object],
+    ) -> None:
+        self.edited_events.append((product, json_before, json_after))
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +203,14 @@ def _make_service(
     seller_id: UUID,
     product: ProductEntity | None = None,
     existing_sku_count: int = 0,
+    existing_sku: SkuEntity | None = None,
     moderation_client: _FakeModerationClient | None = None,
 ) -> tuple[SkuService, _FakeModerationClient, _StubSkuRepo, _StubProductRepo]:
     mod_client = moderation_client or _FakeModerationClient()
-    sku_repo = _StubSkuRepo(existing_count=existing_sku_count)
+    sku_repo = _StubSkuRepo(
+        existing_count=existing_sku_count,
+        existing_sku=existing_sku,
+    )
     product_repo = _StubProductRepo(product=product or _make_product(seller_id))
     service = SkuService(
         sku_repo=sku_repo,
@@ -555,3 +582,112 @@ async def test_create_sku_persists_real_orm_path(
         "https://cdn.example.com/one.jpg",
         "https://cdn.example.com/two.jpg",
     ]
+
+
+@pytest.mark.asyncio
+async def test_reserves_preserved_after_sku_edit(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.MODERATED)
+    sku = SkuEntity(
+        product_id=product.id,
+        name="Old name",
+        price=1000,
+        cost_price=700,
+        active_quantity=8,
+        reserved_quantity=4,
+    )
+    service, mod_client, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/skus/{sku.id}",
+            json={
+                "name": "New name",
+                "price": 1200,
+                "cost_price": None,
+                "characteristics": [{"name": "Color", "value": "Black"}],
+            },
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 200
+    assert response.json()["reserved_quantity"] == 4
+    assert response.json()["active_quantity"] == 8
+    assert sku_repo.saved[0].reserved_quantity == 4
+    assert sku_repo.saved[0].cost_price is None
+    assert sku_repo.saved[0].characteristics[0].value == "Black"
+    assert product_repo.saved[0].status == ProductStatus.ON_MODERATION
+    assert len(mod_client.edited_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_others_sku_returns_403(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(uuid4(), status=ProductStatus.MODERATED)
+    sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
+    service, _, sku_repo, _ = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/skus/{sku.id}",
+            json={"name": "No access"},
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_OWNER"
+    assert sku_repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_edit_hard_blocked_sku_returns_403(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.HARD_BLOCKED)
+    sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
+    service, mod_client, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/skus/{sku.id}",
+            json={"name": "No edit"},
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+    assert sku_repo.saved == []
+    assert product_repo.saved == []
+    assert mod_client.edited_events == []

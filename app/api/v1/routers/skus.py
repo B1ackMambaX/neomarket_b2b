@@ -7,7 +7,7 @@ from app.api.v1.dependencies.auth import get_current_seller_id
 from app.core.dependencies import get_sku_service
 from app.domain.entities.sku import SkuEntity
 from app.schemas.product import CharacteristicResponse
-from app.schemas.sku import SKUCreate, SKUImageResponse, SKUResponse
+from app.schemas.sku import SKUCreate, SKUImageResponse, SKUResponse, SKUUpdate
 from app.services.sku_service import SkuService
 
 router = APIRouter(prefix="/skus", tags=["SKUs"])
@@ -20,19 +20,7 @@ def _sku_image_responses(sku: SkuEntity) -> list[SKUImageResponse]:
     ]
 
 
-@router.post(
-    "",
-    response_model=SKUResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Создать SKU. Первый SKU товара → товар ON_MODERATION + событие CREATED",
-    operation_id="createSku",
-)
-async def create_sku(
-    payload: SKUCreate,
-    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
-    service: Annotated[SkuService, Depends(get_sku_service)],
-) -> SKUResponse:
-    sku = await service.create_sku(seller_id=seller_id, payload=payload)
+def _sku_response(sku: SkuEntity) -> SKUResponse:
     return SKUResponse(
         id=sku.id,
         product_id=sku.product_id,
@@ -52,3 +40,56 @@ async def create_sku(
         created_at=sku.created_at,
         updated_at=sku.updated_at,
     )
+
+
+@router.post(
+    "",
+    response_model=SKUResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать SKU. Первый SKU товара → товар ON_MODERATION + событие CREATED",
+    operation_id="createSku",
+)
+async def create_sku(
+    payload: SKUCreate,
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[SkuService, Depends(get_sku_service)],
+) -> SKUResponse:
+    sku = await service.create_sku(seller_id=seller_id, payload=payload)
+    return _sku_response(sku)
+
+
+@router.patch(
+    "/{sku_id}",
+    response_model=SKUResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Обновить SKU",
+    operation_id="updateSku",
+)
+async def update_sku(
+    sku_id: UUID,
+    payload: SKUUpdate,
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[SkuService, Depends(get_sku_service)],
+) -> SKUResponse:
+    sku = await service.update_sku(seller_id=seller_id, sku_id=sku_id, payload=payload)
+    return _sku_response(sku)
+
+
+@router.put(
+    "/{sku_id}",
+    response_model=SKUResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def replace_sku(
+    sku_id: UUID,
+    payload: SKUUpdate,
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[SkuService, Depends(get_sku_service)],
+) -> SKUResponse:
+    sku = await service.update_sku(
+        seller_id=seller_id,
+        sku_id=sku_id,
+        payload=payload,
+    )
+    return _sku_response(sku)

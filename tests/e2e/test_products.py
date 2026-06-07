@@ -37,6 +37,7 @@ from app.infrastructure.database.models import (
     SkuModel,
 )
 from app.infrastructure.database.models.base import Base
+from app.infrastructure.external.moderation_client import AbstractModerationClient
 from app.services.product_service import ProductService
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,26 @@ class _StubCategoryRepo(AbstractCategoryRepository):
         return entity
 
 
+class _FakeModerationClient(AbstractModerationClient):
+    def __init__(self) -> None:
+        self.edited_events: list[
+            tuple[ProductEntity, dict[str, object], dict[str, object]]
+        ] = []
+
+    @override
+    async def send_product_created(self, product: ProductEntity) -> None:
+        pass
+
+    @override
+    async def send_product_edited(
+        self,
+        product: ProductEntity,
+        json_before: dict[str, object],
+        json_after: dict[str, object],
+    ) -> None:
+        self.edited_events.append((product, json_before, json_after))
+
+
 def _product_skus(product: ProductEntity) -> list[SkuEntity]:
     return product.skus
 
@@ -355,6 +376,117 @@ async def test_missing_images_returns_400(
     assert response.status_code == 400
     body = response.json()
     assert "image" in body.get("message", "").lower()
+
+
+async def _edit_product(
+    product: ProductEntity,
+    token_seller_id: UUID,
+) -> tuple[Response, _ProductRepoStub, _FakeModerationClient]:
+    from app.core.dependencies import get_product_service
+    from app.main import app
+
+    repo = _ProductRepoStub(product=product)
+    moderation_client = _FakeModerationClient()
+    service = ProductService(
+        product_repo=repo,
+        seller_repo=_StubSellerRepo(token_seller_id),
+        category_repo=_StubCategoryRepo(),
+        moderation_client=moderation_client,
+    )
+    token = create_access_token({"sub": str(token_seller_id)}, settings.SECRET_KEY)
+    app.dependency_overrides[get_product_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/products/{product.id}",
+            json={"description": "Updated description"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    _ = app.dependency_overrides.pop(get_product_service, None)
+    return response, repo, moderation_client
+
+
+@pytest.mark.asyncio
+async def test_edit_moderated_product_returns_to_on_moderation() -> None:
+    seller_id = uuid4()
+    product = ProductEntity(
+        seller_id=seller_id,
+        category_id=uuid4(),
+        title="Product",
+        description="Before",
+        slug="product",
+        status=ProductStatus.MODERATED,
+    )
+
+    response, repo, moderation_client = await _edit_product(product, seller_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == ProductStatus.ON_MODERATION
+    assert repo.saved[0].status == ProductStatus.ON_MODERATION
+    assert len(moderation_client.edited_events) == 1
+    _, json_before, json_after = moderation_client.edited_events[0]
+    assert json_before["status"] == ProductStatus.MODERATED
+    assert json_after["status"] == ProductStatus.ON_MODERATION
+
+
+@pytest.mark.asyncio
+async def test_edit_blocked_product_returns_to_on_moderation() -> None:
+    seller_id = uuid4()
+    product = ProductEntity(
+        seller_id=seller_id,
+        category_id=uuid4(),
+        title="Product",
+        description="Before",
+        slug="product",
+        status=ProductStatus.BLOCKED,
+        blocked=True,
+    )
+
+    response, repo, moderation_client = await _edit_product(product, seller_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == ProductStatus.ON_MODERATION
+    assert repo.saved[0].status == ProductStatus.ON_MODERATION
+    assert len(moderation_client.edited_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_hard_blocked_returns_403() -> None:
+    seller_id = uuid4()
+    product = ProductEntity(
+        seller_id=seller_id,
+        category_id=uuid4(),
+        title="Product",
+        description="Before",
+        slug="product",
+        status=ProductStatus.HARD_BLOCKED,
+    )
+
+    response, repo, moderation_client = await _edit_product(product, seller_id)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+    assert repo.saved == []
+    assert moderation_client.edited_events == []
+
+
+@pytest.mark.asyncio
+async def test_edit_others_product_returns_403() -> None:
+    product = ProductEntity(
+        seller_id=uuid4(),
+        category_id=uuid4(),
+        title="Product",
+        description="Before",
+        slug="product",
+        status=ProductStatus.MODERATED,
+    )
+
+    response, repo, moderation_client = await _edit_product(product, uuid4())
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "NOT_OWNER"
+    assert repo.saved == []
+    assert moderation_client.edited_events == []
 
 
 @pytest.mark.asyncio

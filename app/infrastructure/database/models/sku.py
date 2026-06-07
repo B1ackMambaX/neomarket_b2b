@@ -55,6 +55,10 @@ class SkuModel(Base):
         cascade="all, delete-orphan",
         order_by="SkuImageModel.ordering",
     )
+    characteristics: Mapped[list["SkuCharacteristicModel"]] = relationship(
+        back_populates="sku",
+        cascade="all, delete-orphan",
+    )
 
 
 class SkuImageModel(Base):
@@ -74,3 +78,19 @@ class SkuImageModel(Base):
     )
 
     sku: Mapped["SkuModel"] = relationship(back_populates="images")
+
+
+class SkuCharacteristicModel(Base):
+    __tablename__: str = "sku_characteristics"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    sku_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("skus.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    sku: Mapped["SkuModel"] = relationship(back_populates="characteristics")

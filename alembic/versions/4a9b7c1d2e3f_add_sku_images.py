@@ -40,7 +40,7 @@ def upgrade() -> None:
         ["sku_id", "ordering"],
         unique=False,
     )
-    op.execute(
+    op.get_bind().exec_driver_sql(
         """
         INSERT INTO sku_images (id, sku_id, url, ordering)
         SELECT (

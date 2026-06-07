@@ -12,6 +12,9 @@ from app.infrastructure.database.repositories.category_repo import (
 from app.infrastructure.database.repositories.inventory_repo import (
     SQLAlchemyInventoryRepository,
 )
+from app.infrastructure.database.repositories.invoice_repo import (
+    SQLAlchemyInvoiceRepository,
+)
 from app.infrastructure.database.repositories.product_repo import (
     SQLAlchemyProductRepository,
 )
@@ -22,6 +25,7 @@ from app.infrastructure.database.repositories.sku_repo import SQLAlchemySkuRepos
 from app.infrastructure.external.http_b2c_event_publisher import HttpB2cEventPublisher
 from app.infrastructure.external.moderation_client import HttpModerationClient
 from app.services.inventory_service import InventoryService
+from app.services.invoice_service import InvoiceService
 from app.services.product_service import ProductService
 from app.services.sku_service import SkuService
 
@@ -60,6 +64,16 @@ def get_inventory_service(
             url=settings.B2C_URL,
             service_key=settings.B2B_TO_B2C_KEY,
         ),
+    )
+
+
+def get_invoice_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceService:
+    return InvoiceService(
+        invoice_repo=SQLAlchemyInvoiceRepository(db),
+        sku_repo=SQLAlchemySkuRepository(db),
+        product_repo=SQLAlchemyProductRepository(db),
     )
 
 

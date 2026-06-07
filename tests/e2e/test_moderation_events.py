@@ -34,6 +34,10 @@ class _ModerationProductRepo(AbstractProductRepository):
         return self.product if self.product.id == product_id else None
 
     @override
+    async def get_many_by_ids(self, product_ids: list[UUID]) -> list[ProductEntity]:
+        return [self.product] if self.product.id in product_ids else []
+
+    @override
     async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:
         return await self.get_by_id(product_id)
 

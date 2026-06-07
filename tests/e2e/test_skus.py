@@ -52,6 +52,10 @@ class _StubSkuRepo(AbstractSkuRepository):
         return self._existing_sku
 
     @override
+    async def get_many_by_ids(self, sku_ids: list[UUID]) -> list[SkuEntity]:
+        return [self._existing_sku] if self._existing_sku is not None else []
+
+    @override
     async def get_by_id_for_update(self, sku_id: UUID) -> SkuEntity | None:
         return self._existing_sku
 
@@ -89,6 +93,10 @@ class _StubProductRepo(AbstractProductRepository):
     @override
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None:
         return self._product
+
+    @override
+    async def get_many_by_ids(self, product_ids: list[UUID]) -> list[ProductEntity]:
+        return [self._product] if self._product is not None else []
 
     @override
     async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None:

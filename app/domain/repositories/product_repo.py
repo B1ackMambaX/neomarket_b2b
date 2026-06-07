@@ -10,6 +10,9 @@ class AbstractProductRepository(ABC):
     async def get_by_id(self, product_id: UUID) -> ProductEntity | None: ...
 
     @abstractmethod
+    async def get_many_by_ids(self, product_ids: list[UUID]) -> list[ProductEntity]: ...
+
+    @abstractmethod
     async def get_by_id_for_update(self, product_id: UUID) -> ProductEntity | None: ...
 
     @abstractmethod

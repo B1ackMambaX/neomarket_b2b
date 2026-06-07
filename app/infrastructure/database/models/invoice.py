@@ -22,9 +22,13 @@ class InvoiceModel(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     seller_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sellers.id", ondelete="CASCADE"), index=True)
     invoice_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="DRAFT")
+    status: Mapped[str] = mapped_column(String(50), default="CREATED")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_by: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
 
     seller: Mapped["SellerModel"] = relationship(back_populates="invoices")
     items: Mapped[list["InvoiceItemModel"]] = relationship(back_populates="invoice", cascade="all, delete-orphan")
@@ -38,6 +42,7 @@ class InvoiceItemModel(Base):
     sku_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skus.id", ondelete="RESTRICT"), index=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     price_per_unit: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    accepted_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     invoice: Mapped["InvoiceModel"] = relationship(back_populates="items")

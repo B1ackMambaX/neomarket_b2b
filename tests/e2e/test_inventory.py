@@ -1,11 +1,12 @@
+import json
 from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timezone
-from typing import override
+from typing import cast, override
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient, Response
+from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -33,6 +34,7 @@ from app.infrastructure.database.models.reservation import (
 )
 from app.infrastructure.database.models.seller import SellerModel
 from app.infrastructure.database.models.sku import SkuModel
+from app.infrastructure.external.http_b2c_event_publisher import HttpB2cEventPublisher
 from app.services.inventory_service import InventoryService
 
 # ---------------------------------------------------------------------------
@@ -212,11 +214,11 @@ async def real_db_schema() -> AsyncIterator[None]:
 
 async def _reserve(
     repo: _StubInventoryRepo,
-    publisher: _StubEventPublisher,
+    publisher: AbstractEventPublisher,
     payload: Mapping[str, object],
     *,
     headers: dict[str, str] | None = None,
-) -> tuple[Response, _StubInventoryRepo, _StubEventPublisher]:
+) -> tuple[Response, _StubInventoryRepo, AbstractEventPublisher]:
     from app.core.dependencies import get_inventory_service
     from app.main import app
 
@@ -352,12 +354,31 @@ async def test_idempotent_reserve_returns_200_without_double_deduction():
 
 
 @pytest.mark.asyncio
-async def test_sku_out_of_stock_event_emitted():
+async def test_sku_out_of_stock_event_delivered_to_b2c(monkeypatch: pytest.MonkeyPatch):
     sku_id = uuid4()
     repo = _StubInventoryRepo({sku_id: (2, 0)})
-    publisher = _StubEventPublisher()
+    requests: list[Request] = []
 
-    response, _, publisher = await _reserve(
+    def handle_b2c_event(request: Request) -> Response:
+        requests.append(request)
+        return Response(status_code=202)
+
+    transport = MockTransport(handle_b2c_event)
+
+    class _B2cTestClient(AsyncClient):
+        def __init__(self, timeout: float) -> None:
+            super().__init__(transport=transport, timeout=timeout)
+
+    monkeypatch.setattr(
+        "app.infrastructure.external.http_b2c_event_publisher.httpx.AsyncClient",
+        _B2cTestClient,
+    )
+    publisher = HttpB2cEventPublisher(
+        url=settings.B2C_URL,
+        service_key=settings.B2B_TO_B2C_KEY,
+    )
+
+    response, _, _ = await _reserve(
         repo,
         publisher,
         {
@@ -368,7 +389,19 @@ async def test_sku_out_of_stock_event_emitted():
     )
 
     assert response.status_code == 200
-    assert sku_id in publisher.out_of_stock_events
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.url) == f"{settings.B2C_URL}/api/v1/b2b/events"
+    assert request.headers["X-Service-Key"] == settings.B2B_TO_B2C_KEY
+    event = cast(dict[str, object], json.loads(request.content))
+    assert event["event_type"] == "SKU_OUT_OF_STOCK"
+    idempotency_key = event["idempotency_key"]
+    occurred_at = event["occurred_at"]
+    assert isinstance(idempotency_key, str)
+    assert isinstance(occurred_at, str)
+    assert UUID(idempotency_key)
+    assert datetime.fromisoformat(occurred_at).tzinfo is not None
+    assert event["payload"] == {"sku_id": str(sku_id)}
 
 
 @pytest.mark.asyncio

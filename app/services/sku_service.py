@@ -11,8 +11,12 @@ from app.domain.exceptions import (
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.sku_repo import AbstractSkuRepository
 from app.domain.value_objects.product_status import ProductStatus
-from app.infrastructure.external.moderation_client import AbstractModerationClient
-from app.schemas.sku import SKUCreate
+from app.domain.utils.datetime import utc_now
+from app.infrastructure.external.moderation_client import (
+    AbstractModerationClient,
+    moderation_snapshot,
+)
+from app.schemas.sku import SKUCreate, SKUUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -85,4 +89,57 @@ class SkuService:
                 )
             )
 
+        return saved_sku
+
+    async def update_sku(
+        self,
+        seller_id: UUID,
+        sku_id: UUID,
+        payload: SKUUpdate,
+    ) -> SkuEntity:
+        sku = await self._sku_repo.get_by_id_for_update(sku_id)
+        if sku is None:
+            raise NotFoundException("SKU not found")
+
+        product = await self._product_repo.get_by_id_for_update(sku.product_id)
+        if product is None:
+            raise NotFoundException("Product not found")
+        if product.seller_id != seller_id:
+            raise NotOwnerException(
+                "Product does not belong to the authenticated seller"
+            )
+        if product.status == ProductStatus.HARD_BLOCKED:
+            raise ForbiddenException("Cannot edit hard-blocked product")
+
+        json_before = moderation_snapshot(product)
+        if payload.name is not None:
+            sku.name = payload.name
+        if payload.price is not None:
+            sku.price = payload.price
+        if "cost_price" in payload.model_fields_set:
+            sku.cost_price = payload.cost_price
+        if payload.discount is not None:
+            sku.discount = payload.discount
+        if "article" in payload.model_fields_set:
+            sku.article = payload.article
+        if payload.characteristics is not None:
+            sku.characteristics = [
+                SkuCharacteristicEntity(name=c.name, value=c.value)
+                for c in payload.characteristics
+            ]
+        sku.updated_at = utc_now()
+
+        should_resubmit = product.resubmit_after_edit()
+
+        saved_sku = await self._sku_repo.save(sku)
+        if should_resubmit:
+            saved_product = await self._product_repo.save(product)
+            all_skus_after = [
+                saved_sku if s.id == saved_sku.id else s for s in product.skus
+            ]
+            await self._moderation_client.send_product_edited(
+                saved_product,
+                json_before=json_before,
+                json_after=moderation_snapshot(saved_product, skus=all_skus_after),
+            )
         return saved_sku

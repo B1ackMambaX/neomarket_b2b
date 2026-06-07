@@ -174,6 +174,9 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                 selectinload(ProductModel.images),
                 selectinload(ProductModel.characteristics),
                 selectinload(ProductModel.skus).selectinload(SkuModel.images),
+                selectinload(ProductModel.skus).selectinload(
+                    SkuModel.characteristics
+                ),
                 selectinload(ProductModel.field_reports),
             )
             .where(ProductModel.id == product_id)
@@ -261,6 +264,9 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                 selectinload(ProductModel.images),
                 selectinload(ProductModel.characteristics),
                 selectinload(ProductModel.skus).selectinload(SkuModel.images),
+                selectinload(ProductModel.skus).selectinload(
+                    SkuModel.characteristics
+                ),
             )
             .where(*conditions)
         )
@@ -345,6 +351,14 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                     ] or (
                         [SkuImageEntity(url=s.image, ordering=0)] if s.image else []
                     ),
+                    characteristics=[
+                        SkuCharacteristicEntity(
+                            id=characteristic.id,
+                            name=characteristic.name,
+                            value=characteristic.value,
+                        )
+                        for characteristic in getattr(s, "characteristics", [])
+                    ],
                     is_active=s.is_active,
                     created_at=s.created_at,
                     updated_at=s.updated_at,

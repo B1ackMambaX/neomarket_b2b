@@ -84,6 +84,13 @@ class ProductEntity:
         self.status = ProductStatus.ON_MODERATION
         self.updated_at = utc_now()
 
+    def resubmit_after_edit(self) -> bool:
+        if self.status not in {ProductStatus.MODERATED, ProductStatus.BLOCKED}:
+            return False
+        self.status = ProductStatus.ON_MODERATION
+        self.updated_at = utc_now()
+        return True
+
     def approve(self) -> None:
         if self.status != ProductStatus.ON_MODERATION:
             raise InvalidProductStateException(

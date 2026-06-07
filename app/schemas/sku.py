@@ -30,6 +30,19 @@ class SKUCreate(BaseModel):
     characteristics: list[CharacteristicInput] = Field(default_factory=list)
 
 
+class SKUUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    price: int | None = Field(default=None, ge=0, description="Price in kopecks")
+    cost_price: int | None = Field(
+        default=None, ge=0, description="Cost price in kopecks (seller-only)"
+    )
+    discount: int | None = Field(
+        default=None, ge=0, description="Absolute discount in kopecks"
+    )
+    article: str | None = None
+    characteristics: list[CharacteristicInput] | None = None
+
+
 class SKUResponse(BaseModel):
     id: UUID
     product_id: UUID

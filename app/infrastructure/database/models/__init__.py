@@ -14,7 +14,11 @@ from app.infrastructure.database.models.reservation import (
     UnreserveOperationModel,
 )
 from app.infrastructure.database.models.seller import SellerModel
-from app.infrastructure.database.models.sku import SkuImageModel, SkuModel
+from app.infrastructure.database.models.sku import (
+    SkuCharacteristicModel,
+    SkuImageModel,
+    SkuModel,
+)
 
 __all__ = [
     "SellerModel",
@@ -24,6 +28,7 @@ __all__ = [
     "ProductCharacteristicModel",
     "SkuModel",
     "SkuImageModel",
+    "SkuCharacteristicModel",
     "ProductFieldReportModel",
     "InvoiceModel",
     "InvoiceItemModel",

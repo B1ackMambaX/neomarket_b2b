@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.domain.entities.inventory import ReservationResult, UnreserveResult
+from app.domain.entities.inventory import FulfillResult, ReservationResult, UnreserveResult
 
 
 class AbstractInventoryRepository(ABC):
@@ -20,3 +20,10 @@ class AbstractInventoryRepository(ABC):
         order_id: UUID,
         items: list[tuple[UUID, int]],
     ) -> UnreserveResult: ...
+
+    @abstractmethod
+    async def fulfill(
+        self,
+        order_id: UUID,
+        items: list[tuple[UUID, int]],
+    ) -> FulfillResult: ...

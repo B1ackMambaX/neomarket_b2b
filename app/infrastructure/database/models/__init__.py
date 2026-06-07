@@ -10,6 +10,7 @@ from app.infrastructure.database.models.product_field_report import (
 )
 from app.infrastructure.database.models.product_image import ProductImageModel
 from app.infrastructure.database.models.reservation import (
+    FulfillOperationModel,
     ReserveOperationModel,
     UnreserveOperationModel,
 )
@@ -34,5 +35,6 @@ __all__ = [
     "InvoiceItemModel",
     "ReserveOperationModel",
     "UnreserveOperationModel",
+    "FulfillOperationModel",
     "ModerationEventModel",
 ]

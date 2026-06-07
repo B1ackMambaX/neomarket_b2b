@@ -1,6 +1,10 @@
 from uuid import UUID
 
-from app.domain.entities.inventory import ReservationResult, UnreserveResult
+from app.domain.entities.inventory import (
+    FulfillResult,
+    ReservationResult,
+    UnreserveResult,
+)
 from app.domain.events import AbstractEventPublisher
 from app.domain.repositories.inventory_repo import AbstractInventoryRepository
 
@@ -36,3 +40,10 @@ class InventoryService:
         items: list[tuple[UUID, int]],
     ) -> UnreserveResult:
         return await self._inventory_repo.unreserve(order_id=order_id, items=items)
+
+    async def fulfill(
+        self,
+        order_id: UUID,
+        items: list[tuple[UUID, int]],
+    ) -> FulfillResult:
+        return await self._inventory_repo.fulfill(order_id=order_id, items=items)

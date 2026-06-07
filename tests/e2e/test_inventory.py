@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory, engine
 from app.domain.entities.inventory import (
+    FulfillResult,
     ReservationItemResult,
     ReservationResult,
     UnreserveResult,
@@ -28,6 +29,7 @@ from app.domain.repositories.inventory_repo import AbstractInventoryRepository
 from app.infrastructure.database.models.base import Base
 from app.infrastructure.database.models.product import ProductModel
 from app.infrastructure.database.models.reservation import (
+    FulfillOperationModel,
     ReserveOperationModel,
     SerializedInventoryItem,
     UnreserveOperationModel,
@@ -49,6 +51,8 @@ class _StubInventoryRepo(AbstractInventoryRepository):
         self._operations: dict[UUID, ReservationResult] = {}
         self._unreserve_ops: dict[UUID, UnreserveResult] = {}
         self._unreserve_items: dict[UUID, list[SerializedInventoryItem]] = {}
+        self._fulfill_ops: dict[UUID, FulfillResult] = {}
+        self._fulfill_items: dict[UUID, list[SerializedInventoryItem]] = {}
 
     @override
     async def reserve(
@@ -161,6 +165,47 @@ class _StubInventoryRepo(AbstractInventoryRepository):
         self._unreserve_items[order_id] = requested_items
         return result
 
+    @override
+    async def fulfill(
+        self, order_id: UUID, items: list[tuple[UUID, int]]
+    ) -> FulfillResult:
+        normalized = _normalize_items(items)
+        requested_items = _serialize_items(normalized)
+        if order_id in self._fulfill_ops:
+            cached = self._fulfill_ops[order_id]
+            return FulfillResult(
+                order_id=cached.order_id,
+                processed_at=cached.processed_at,
+                from_cache=True,
+            )
+
+        failed: list[FailedReservedItem] = []
+        for sku_id, qty in normalized:
+            _, reserved = self._skus.get(sku_id, (0, 0))
+            if reserved < qty:
+                failed.append(
+                    {
+                        "sku_id": sku_id,
+                        "requested": qty,
+                        "reserved": reserved,
+                        "reason": "INSUFFICIENT_RESERVED",
+                    }
+                )
+        if failed:
+            raise InsufficientReservedException(failed)
+
+        for sku_id, qty in normalized:
+            active, reserved = self._skus[sku_id]
+            self._skus[sku_id] = (active, reserved - qty)
+
+        result = FulfillResult(
+            order_id=order_id,
+            processed_at=datetime.now(timezone.utc),
+        )
+        self._fulfill_ops[order_id] = result
+        self._fulfill_items[order_id] = requested_items
+        return result
+
 
 class _StubEventPublisher(AbstractEventPublisher):
     def __init__(self) -> None:
@@ -258,6 +303,30 @@ async def _unreserve(
         response = await ac.post(
             "/api/v1/inventory/unreserve",
             headers=SERVICE_KEY_HEADER,
+            json=payload,
+        )
+    _ = app.dependency_overrides.pop(get_inventory_service, None)
+    return response
+
+
+async def _fulfill(
+    repo: _StubInventoryRepo,
+    publisher: _StubEventPublisher,
+    payload: Mapping[str, object],
+    *,
+    headers: dict[str, str] | None = SERVICE_KEY_HEADER,
+) -> Response:
+    from app.core.dependencies import get_inventory_service
+    from app.main import app
+
+    app.dependency_overrides[get_inventory_service] = lambda: InventoryService(
+        inventory_repo=repo, event_publisher=publisher
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/inventory/fulfill",
+            headers=headers,
             json=payload,
         )
     _ = app.dependency_overrides.pop(get_inventory_service, None)
@@ -527,6 +596,133 @@ async def test_unreserve_replay_with_different_items_returns_409():
 
 
 @pytest.mark.asyncio
+async def test_fulfill_decreases_reserved_quantity():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 5)})
+    publisher = _StubEventPublisher()
+
+    response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": str(uuid4()),
+            "items": [{"sku_id": str(sku_id), "quantity": 3}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "FULFILLED"
+    assert repo._skus[sku_id][1] == 2
+
+
+@pytest.mark.asyncio
+async def test_active_quantity_unchanged():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 5)})
+    publisher = _StubEventPublisher()
+
+    response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": str(uuid4()),
+            "items": [{"sku_id": str(sku_id), "quantity": 3}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert repo._skus[sku_id] == (7, 2)
+
+
+@pytest.mark.asyncio
+async def test_idempotent_fulfill_no_double_deduction():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 5)})
+    publisher = _StubEventPublisher()
+    payload = {
+        "order_id": str(uuid4()),
+        "items": [{"sku_id": str(sku_id), "quantity": 3}],
+    }
+
+    first_response = await _fulfill(repo, publisher, payload)
+    second_response = await _fulfill(repo, publisher, payload)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert repo._skus[sku_id] == (7, 2)
+
+
+@pytest.mark.asyncio
+async def test_missing_service_key_returns_401():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 5)})
+    publisher = _StubEventPublisher()
+
+    response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": str(uuid4()),
+            "items": [{"sku_id": str(sku_id), "quantity": 3}],
+        },
+        headers=None,
+    )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
+    assert repo._skus[sku_id] == (7, 5)
+
+
+@pytest.mark.asyncio
+async def test_fulfill_replay_with_different_items_returns_200_without_changes():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 5)})
+    publisher = _StubEventPublisher()
+    order_id = str(uuid4())
+
+    first_response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": order_id,
+            "items": [{"sku_id": str(sku_id), "quantity": 2}],
+        },
+    )
+    replay_response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": order_id,
+            "items": [{"sku_id": str(sku_id), "quantity": 1}],
+        },
+    )
+
+    assert first_response.status_code == 200
+    assert replay_response.status_code == 200
+    assert repo._skus[sku_id] == (7, 3)
+
+
+@pytest.mark.asyncio
+async def test_fulfill_insufficient_reserved_returns_409():
+    sku_id = uuid4()
+    repo = _StubInventoryRepo({sku_id: (7, 2)})
+    publisher = _StubEventPublisher()
+
+    response = await _fulfill(
+        repo,
+        publisher,
+        {
+            "order_id": str(uuid4()),
+            "items": [{"sku_id": str(sku_id), "quantity": 3}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "INSUFFICIENT_RESERVED"
+    assert repo._skus[sku_id] == (7, 2)
+
+
+@pytest.mark.asyncio
 async def test_inventory_real_db_commits_reserve_and_unreserve_operations(
     real_db_schema: None,
 ) -> None:
@@ -609,3 +805,82 @@ async def test_inventory_real_db_commits_reserve_and_unreserve_operations(
     assert reserve_op is not None
     assert unreserve_op is not None
     assert unreserve_op.items == [{"sku_id": str(sku_id), "quantity": 4}]
+
+
+@pytest.mark.asyncio
+async def test_inventory_real_db_commits_fulfill_operation(
+    real_db_schema: None,
+) -> None:
+    _ = real_db_schema
+    from app.main import app
+
+    seller_id = uuid4()
+    product_id = uuid4()
+    sku_id = uuid4()
+    order_id = uuid4()
+
+    async with AsyncSessionFactory() as session:
+        session.add(
+            SellerModel(
+                id=seller_id,
+                company_name="Seller",
+                inn="123456789012",
+                status="ACTIVE",
+            )
+        )
+        session.add(
+            ProductModel(
+                id=product_id,
+                seller_id=seller_id,
+                category_id=uuid4(),
+                title="Delivered product",
+                description="Visible to buyers",
+                slug="delivered-product",
+                status="MODERATED",
+            )
+        )
+        session.add(
+            SkuModel(
+                id=sku_id,
+                product_id=product_id,
+                name="Default",
+                price=10000,
+                cost_price=5000,
+                discount=0,
+                active_quantity=6,
+                reserved_quantity=4,
+                is_active=True,
+            )
+        )
+        await session.commit()
+
+    app.dependency_overrides.clear()
+    transport = ASGITransport(app=app)
+    payload = {
+        "order_id": str(order_id),
+        "items": [{"sku_id": str(sku_id), "quantity": 3}],
+    }
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        first_response = await ac.post(
+            "/api/v1/inventory/fulfill",
+            headers=SERVICE_KEY_HEADER,
+            json=payload,
+        )
+        retry_response = await ac.post(
+            "/api/v1/inventory/fulfill",
+            headers=SERVICE_KEY_HEADER,
+            json=payload,
+        )
+
+    assert first_response.status_code == 200
+    assert retry_response.status_code == 200
+
+    async with AsyncSessionFactory() as session:
+        sku = await session.get(SkuModel, sku_id)
+        fulfill_op = await session.get(FulfillOperationModel, order_id)
+
+    assert sku is not None
+    assert sku.active_quantity == 6
+    assert sku.reserved_quantity == 1
+    assert fulfill_op is not None
+    assert fulfill_op.items == [{"sku_id": str(sku_id), "quantity": 3}]

@@ -13,6 +13,8 @@ from app.domain.exceptions import (
 from app.schemas.inventory import (
     FailedItemDetail,
     FailedReservedItemDetail,
+    FulfillRequest,
+    FulfillResponse,
     ReserveItemResponse,
     ReserveRequest,
     ReserveSuccessResponse,
@@ -105,4 +107,40 @@ async def unreserve_inventory(
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"code": exc.code, "message": str(exc)},
+        )
+
+
+@router.post(
+    "/fulfill",
+    response_model=FulfillResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Списать резерв при доставке. Идемпотентно по order_id.",
+    operation_id="fulfillInventory",
+)
+async def fulfill_inventory(
+    payload: FulfillRequest,
+    _: Annotated[None, Depends(require_b2c_service_key)],
+    service: Annotated[InventoryService, Depends(get_inventory_service)],
+) -> FulfillResponse | JSONResponse:
+    try:
+        result = await service.fulfill(
+            order_id=payload.order_id,
+            items=[(item.sku_id, item.quantity) for item in payload.items],
+        )
+        return FulfillResponse(
+            order_id=result.order_id,
+            status="FULFILLED",
+            processed_at=result.processed_at,
+        )
+    except InsufficientReservedException as exc:
+        failed = [FailedReservedItemDetail(**fi) for fi in exc.failed_items]
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "code": exc.code,
+                "message": str(exc),
+                "details": {
+                    "failed_items": [item.model_dump(mode="json") for item in failed]
+                },
+            },
         )

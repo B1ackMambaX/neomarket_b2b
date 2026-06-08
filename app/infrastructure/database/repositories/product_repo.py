@@ -240,6 +240,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             select(SkuModel.id).where(
                 SkuModel.product_id == ProductModel.id,
                 SkuModel.active_quantity > 0,
+                SkuModel.is_active.is_(True),
             )
         )
         conditions = [
@@ -265,6 +266,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                     select(SkuModel.id).where(
                         SkuModel.product_id == ProductModel.id,
                         SkuModel.active_quantity > 0,
+                        SkuModel.is_active.is_(True),
                         SkuModel.price >= min_price,
                     )
                 )
@@ -275,6 +277,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                     select(SkuModel.id).where(
                         SkuModel.product_id == ProductModel.id,
                         SkuModel.active_quantity > 0,
+                        SkuModel.is_active.is_(True),
                         SkuModel.price <= max_price,
                     )
                 )
@@ -311,7 +314,9 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             query = query.order_by(
                 select(func.min(SkuModel.price))
                 .where(
-                    SkuModel.product_id == ProductModel.id, SkuModel.active_quantity > 0
+                    SkuModel.product_id == ProductModel.id,
+                    SkuModel.active_quantity > 0,
+                    SkuModel.is_active.is_(True),
                 )
                 .scalar_subquery()
                 .asc()
@@ -320,7 +325,9 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
             query = query.order_by(
                 select(func.min(SkuModel.price))
                 .where(
-                    SkuModel.product_id == ProductModel.id, SkuModel.active_quantity > 0
+                    SkuModel.product_id == ProductModel.id,
+                    SkuModel.active_quantity > 0,
+                    SkuModel.is_active.is_(True),
                 )
                 .scalar_subquery()
                 .desc()
@@ -401,6 +408,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                     updated_at=s.updated_at,
                 )
                 for s in getattr(model, "skus", [])
+                if s.is_active
             ]
         field_reports = []
         if load_reports:

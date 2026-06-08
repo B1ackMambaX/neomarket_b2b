@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -84,3 +84,36 @@ async def test_send_product_deleted_matches_moderation_openapi() -> None:
     _ = UUID(body["idempotency_key"])
     _ = datetime.fromisoformat(body["occurred_at"].replace("Z", "+00:00"))
     assert payload == {"product_id": str(product.id)}
+
+
+@pytest.mark.asyncio
+async def test_send_product_deleted_idempotency_key_tracks_deletion_version() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(202)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = HttpModerationClient(
+            url="http://moderation",
+            service_key="service-key",
+            http_client=http_client,
+        )
+        product = ProductEntity(
+            seller_id=uuid4(),
+            category_id=uuid4(),
+            title="Product",
+        )
+
+        await client.send_product_deleted(product)
+        await client.send_product_deleted(product)
+        product.updated_at += timedelta(microseconds=1)
+        await client.send_product_deleted(product)
+
+    keys = [
+        cast(dict[str, Any], json.loads(request.content))["idempotency_key"]
+        for request in requests
+    ]
+    assert keys[0] == keys[1]
+    assert keys[1] != keys[2]

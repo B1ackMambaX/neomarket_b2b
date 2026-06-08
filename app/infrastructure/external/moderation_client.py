@@ -163,7 +163,10 @@ class HttpModerationClient(AbstractModerationClient):
             payload = {
                 "event_type": "PRODUCT_DELETED",
                 "idempotency_key": str(
-                    uuid5(NAMESPACE_URL, f"{product.id}:PRODUCT_DELETED")
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"{product.id}:PRODUCT_DELETED:{product.updated_at.isoformat()}",
+                    )
                 ),
                 "occurred_at": _event_timestamp(),
                 "payload": {"product_id": str(product.id)},

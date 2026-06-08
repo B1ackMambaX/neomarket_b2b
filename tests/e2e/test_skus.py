@@ -18,6 +18,7 @@ from app.core.database import AsyncSessionFactory, engine
 from app.core.security import create_access_token
 from app.domain.entities.product import ProductEntity
 from app.domain.entities.sku import SkuEntity
+from app.domain.events import AbstractEventPublisher
 from app.domain.exceptions import NotFoundException
 from app.domain.repositories.product_repo import AbstractProductRepository
 from app.domain.repositories.sku_repo import AbstractSkuRepository
@@ -29,6 +30,7 @@ from app.infrastructure.database.models import (
     SkuModel,
 )
 from app.infrastructure.database.models.base import Base
+from app.infrastructure.database.repositories.sku_repo import SQLAlchemySkuRepository
 from app.infrastructure.external.moderation_client import AbstractModerationClient
 from app.services.sku_service import SkuService
 
@@ -46,6 +48,7 @@ class _StubSkuRepo(AbstractSkuRepository):
         self._count: int = existing_count
         self._existing_sku: SkuEntity | None = existing_sku
         self.saved: list[SkuEntity] = []
+        self.deleted: list[UUID] = []
 
     @override
     async def get_by_id(self, sku_id: UUID) -> SkuEntity | None:
@@ -78,11 +81,16 @@ class _StubSkuRepo(AbstractSkuRepository):
     @override
     async def save(self, sku: SkuEntity) -> SkuEntity:
         self.saved.append(sku)
+        if not sku.is_active:
+            self._existing_sku = None
+            self._count = max(0, self._count - 1)
         return sku
 
     @override
     async def delete(self, sku_id: UUID) -> None:
-        pass
+        self.deleted.append(sku_id)
+        self._existing_sku = None
+        self._count = max(0, self._count - 1)
 
 
 class _StubProductRepo(AbstractProductRepository):
@@ -168,6 +176,7 @@ class _FakeModerationClient(AbstractModerationClient):
         self.edited_events: list[
             tuple[ProductEntity, dict[str, object], dict[str, object]]
         ] = []
+        self.deleted_events: list[ProductEntity] = []
 
     @override
     async def send_product_created(self, product: ProductEntity) -> None:
@@ -184,6 +193,27 @@ class _FakeModerationClient(AbstractModerationClient):
 
     @override
     async def send_product_deleted(self, product: ProductEntity) -> None:
+        self.deleted_events.append(product)
+
+
+class _FakeEventPublisher(AbstractEventPublisher):
+    def __init__(self) -> None:
+        self.out_of_stock_events: list[UUID] = []
+
+    @override
+    async def publish_sku_out_of_stock(self, sku_id: UUID) -> None:
+        self.out_of_stock_events.append(sku_id)
+
+    @override
+    async def publish_product_blocked(
+        self, product_id: UUID, sku_ids: list[UUID], *, hard_block: bool = False
+    ) -> None:
+        pass
+
+    @override
+    async def publish_product_deleted(
+        self, product_id: UUID, sku_ids: list[UUID]
+    ) -> None:
         pass
 
 
@@ -221,8 +251,16 @@ def _make_service(
     existing_sku_count: int = 0,
     existing_sku: SkuEntity | None = None,
     moderation_client: _FakeModerationClient | None = None,
-) -> tuple[SkuService, _FakeModerationClient, _StubSkuRepo, _StubProductRepo]:
+    event_publisher: _FakeEventPublisher | None = None,
+) -> tuple[
+    SkuService,
+    _FakeModerationClient,
+    _FakeEventPublisher,
+    _StubSkuRepo,
+    _StubProductRepo,
+]:
     mod_client = moderation_client or _FakeModerationClient()
+    publisher = event_publisher or _FakeEventPublisher()
     sku_repo = _StubSkuRepo(
         existing_count=existing_sku_count,
         existing_sku=existing_sku,
@@ -232,8 +270,9 @@ def _make_service(
         sku_repo=sku_repo,
         product_repo=product_repo,
         moderation_client=mod_client,
+        event_publisher=publisher,
     )
-    return service, mod_client, sku_repo, product_repo
+    return service, mod_client, publisher, sku_repo, product_repo
 
 
 _VALID_PAYLOAD = {
@@ -260,7 +299,7 @@ async def _client_and_deps(
     from app.main import app
 
     product = _make_product(seller_id)
-    service, mod_client, sku_repo, product_repo = _make_service(
+    service, mod_client, _publisher, sku_repo, product_repo = _make_service(
         seller_id, product=product
     )
 
@@ -301,7 +340,7 @@ async def test_first_sku_transitions_product_to_on_moderation(
     from app.main import app
 
     product = _make_product(seller_id, status=ProductStatus.CREATED)
-    service, _, sku_repo, product_repo = _make_service(
+    service, _, _, sku_repo, product_repo = _make_service(
         seller_id, product=product, existing_sku_count=0
     )
     app.dependency_overrides[get_sku_service] = lambda: service
@@ -332,7 +371,7 @@ async def test_first_sku_emits_created_event_to_moderation(
 
     product = _make_product(seller_id, status=ProductStatus.CREATED)
     mod_client = _FakeModerationClient()
-    service, _, _1, _2 = _make_service(
+    service, _, _, _1, _2 = _make_service(
         seller_id, product=product, existing_sku_count=0, moderation_client=mod_client
     )
     app.dependency_overrides[get_sku_service] = lambda: service
@@ -387,7 +426,7 @@ async def test_second_sku_no_state_change(seller_id: UUID, valid_token: str) -> 
 
     product = _make_product(seller_id, status=ProductStatus.ON_MODERATION)
     mod_client = _FakeModerationClient()
-    service, _, _2, product_repo = _make_service(
+    service, _, _, _2, product_repo = _make_service(
         seller_id, product=product, existing_sku_count=1, moderation_client=mod_client
     )
     app.dependency_overrides[get_sku_service] = lambda: service
@@ -419,7 +458,7 @@ async def test_add_sku_to_hard_blocked_returns_403(
     from app.main import app
 
     product = _make_product(seller_id, status=ProductStatus.HARD_BLOCKED)
-    service, _, _, _ = _make_service(seller_id, product=product)
+    service, _, _, _, _ = _make_service(seller_id, product=product)
     app.dependency_overrides[get_sku_service] = lambda: service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -441,7 +480,7 @@ async def test_missing_image_returns_422(seller_id: UUID, valid_token: str) -> N
     from app.main import app
 
     product = _make_product(seller_id)
-    service, _, _, _ = _make_service(seller_id, product=product)
+    service, _, _, _, _ = _make_service(seller_id, product=product)
     app.dependency_overrides[get_sku_service] = lambda: service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -467,7 +506,7 @@ async def test_other_seller_product_returns_not_owner(
     from app.main import app
 
     product = _make_product(uuid4())
-    service, _, _, _ = _make_service(seller_id, product=product)
+    service, _, _, _, _ = _make_service(seller_id, product=product)
     app.dependency_overrides[get_sku_service] = lambda: service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -491,7 +530,9 @@ async def test_create_sku_response_preserves_all_images(
     from app.main import app
 
     product = _make_product(seller_id, status=ProductStatus.ON_MODERATION)
-    service, _, _, _ = _make_service(seller_id, product=product, existing_sku_count=1)
+    service, _, _, _, _ = _make_service(
+        seller_id, product=product, existing_sku_count=1
+    )
     app.dependency_overrides[get_sku_service] = lambda: service
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -616,7 +657,7 @@ async def test_reserves_preserved_after_sku_edit(
         active_quantity=8,
         reserved_quantity=4,
     )
-    service, mod_client, sku_repo, product_repo = _make_service(
+    service, mod_client, _, sku_repo, product_repo = _make_service(
         seller_id,
         product=product,
         existing_sku_count=1,
@@ -656,7 +697,7 @@ async def test_edit_others_sku_returns_403(
 
     product = _make_product(uuid4(), status=ProductStatus.MODERATED)
     sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
-    service, _, sku_repo, _ = _make_service(
+    service, _, _, sku_repo, _ = _make_service(
         seller_id,
         product=product,
         existing_sku_count=1,
@@ -686,7 +727,7 @@ async def test_edit_hard_blocked_sku_returns_403(
 
     product = _make_product(seller_id, status=ProductStatus.HARD_BLOCKED)
     sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
-    service, mod_client, sku_repo, product_repo = _make_service(
+    service, mod_client, _, sku_repo, product_repo = _make_service(
         seller_id,
         product=product,
         existing_sku_count=1,
@@ -707,3 +748,331 @@ async def test_edit_hard_blocked_sku_returns_403(
     assert sku_repo.saved == []
     assert product_repo.saved == []
     assert mod_client.edited_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_sku_succeeds(seller_id: UUID, valid_token: str) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.CREATED)
+    sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=2,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert sku_repo.deleted == []
+    assert sku_repo.saved == [sku]
+    assert sku.is_active is False
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_sku_with_active_reserves_returns_409(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.MODERATED)
+    sku = SkuEntity(
+        product_id=product.id,
+        name="SKU",
+        price=1000,
+        cost_price=700,
+        active_quantity=5,
+        reserved_quantity=1,
+    )
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "code": "CONFLICT",
+        "message": "Cannot delete SKU with active reserves",
+    }
+    assert sku_repo.deleted == []
+    assert sku_repo.saved == []
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_sku_returns_404(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        existing_sku_count=0,
+        existing_sku=None,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{uuid4()}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 404
+    assert response.json() == {"code": "NOT_FOUND", "message": "SKU not found"}
+    assert sku_repo.saved == []
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_others_sku_returns_403(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(uuid4(), status=ProductStatus.MODERATED)
+    sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "NOT_OWNER",
+        "message": "SKU does not belong to the authenticated seller",
+    }
+    assert sku_repo.saved == []
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_last_sku_on_moderation_transitions_product_to_created(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.ON_MODERATION)
+    sku = SkuEntity(product_id=product.id, name="SKU", price=1000, cost_price=700)
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 204
+    assert sku_repo.deleted == []
+    assert sku_repo.saved == [sku]
+    assert sku.is_active is False
+    assert product_repo.saved == [product]
+    assert product.status == ProductStatus.CREATED
+    assert mod_client.deleted_events == [product]
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_delete_sku_hard_blocked_product_returns_403(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.HARD_BLOCKED)
+    sku = SkuEntity(
+        product_id=product.id,
+        name="SKU",
+        price=1000,
+        cost_price=700,
+        reserved_quantity=1,
+    )
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "code": "FORBIDDEN",
+        "message": "Cannot delete SKU of hard-blocked product",
+    }
+    assert sku_repo.deleted == []
+    assert sku_repo.saved == []
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == []
+
+
+@pytest.mark.asyncio
+async def test_sku_out_of_stock_event_on_moderated_product(
+    seller_id: UUID, valid_token: str
+) -> None:
+    from app.core.dependencies import get_sku_service
+    from app.main import app
+
+    product = _make_product(seller_id, status=ProductStatus.MODERATED)
+    sku = SkuEntity(
+        product_id=product.id,
+        name="SKU",
+        price=1000,
+        cost_price=700,
+        active_quantity=5,
+    )
+    service, mod_client, publisher, sku_repo, product_repo = _make_service(
+        seller_id,
+        product=product,
+        existing_sku_count=1,
+        existing_sku=sku,
+    )
+    app.dependency_overrides[get_sku_service] = lambda: service
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku.id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+    _ = app.dependency_overrides.pop(get_sku_service, None)
+
+    assert response.status_code == 204
+    assert sku_repo.deleted == []
+    assert sku_repo.saved == [sku]
+    assert sku.is_active is False
+    assert product_repo.saved == []
+    assert mod_client.deleted_events == []
+    assert publisher.out_of_stock_events == [sku.id]
+
+
+@pytest.mark.asyncio
+async def test_delete_sku_soft_deletes_real_orm_path(
+    real_db_schema: None, seller_id: UUID, valid_token: str
+) -> None:
+    from app.main import app
+
+    _ = real_db_schema
+    product_id = uuid4()
+    sku_id = uuid4()
+    category_id = uuid4()
+
+    async with AsyncSessionFactory() as session:
+        session.add(
+            SellerModel(
+                id=seller_id,
+                company_name="Seller",
+                inn="123456789012",
+                status="ACTIVE",
+            )
+        )
+        session.add(
+            ProductModel(
+                id=product_id,
+                seller_id=seller_id,
+                category_id=category_id,
+                title="Real ORM Product",
+                slug="real-orm-product",
+                status=ProductStatus.CREATED.value,
+            )
+        )
+        session.add(
+            SkuModel(
+                id=sku_id,
+                product_id=product_id,
+                name="Real ORM SKU",
+                price=1000,
+                cost_price=700,
+                active_quantity=5,
+            )
+        )
+        await session.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.delete(
+            f"/api/v1/skus/{sku_id}",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+        reserve_response = await ac.post(
+            "/api/v1/inventory/reserve",
+            headers={"X-Service-Key": settings.B2C_TO_B2B_KEY},
+            json={
+                "idempotency_key": str(uuid4()),
+                "order_id": str(uuid4()),
+                "items": [{"sku_id": str(sku_id), "quantity": 1}],
+            },
+        )
+
+    assert response.status_code == 204
+    assert reserve_response.status_code == 409
+    assert reserve_response.json()["code"] == "INSUFFICIENT_STOCK"
+
+    async with AsyncSessionFactory() as session:
+        model = await session.get(SkuModel, sku_id)
+        repo = SQLAlchemySkuRepository(session)
+        visible_sku = await repo.get_by_id(sku_id)
+        active_count = await repo.count_by_product(product_id)
+
+    assert model is not None
+    assert model.is_active is False
+    assert visible_sku is None
+    assert active_count == 0

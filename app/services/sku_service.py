@@ -3,7 +3,9 @@ import logging
 from uuid import UUID
 
 from app.domain.entities.sku import SkuCharacteristicEntity, SkuEntity, SkuImageEntity
+from app.domain.events import AbstractEventPublisher
 from app.domain.exceptions import (
+    ConflictException,
     ForbiddenException,
     NotFoundException,
     NotOwnerException,
@@ -27,10 +29,12 @@ class SkuService:
         sku_repo: AbstractSkuRepository,
         product_repo: AbstractProductRepository,
         moderation_client: AbstractModerationClient,
+        event_publisher: AbstractEventPublisher,
     ) -> None:
         self._sku_repo: AbstractSkuRepository = sku_repo
         self._product_repo: AbstractProductRepository = product_repo
         self._moderation_client: AbstractModerationClient = moderation_client
+        self._event_publisher: AbstractEventPublisher = event_publisher
         self._background_tasks: set[asyncio.Task[None]] = set()
 
     def _track_background_task(self, task: asyncio.Task[None]) -> None:
@@ -143,3 +147,38 @@ class SkuService:
                 json_after=moderation_snapshot(saved_product, skus=all_skus_after),
             )
         return saved_sku
+
+    async def delete_sku(self, seller_id: UUID, sku_id: UUID) -> None:
+        sku = await self._sku_repo.get_by_id_for_update(sku_id)
+        if sku is None:
+            raise NotFoundException("SKU not found")
+
+        product = await self._product_repo.get_by_id_for_update(sku.product_id)
+        if product is None:
+            raise NotFoundException("Product not found")
+        if product.seller_id != seller_id:
+            raise NotOwnerException(
+                "SKU does not belong to the authenticated seller"
+            )
+
+        # Guardrail order is part of the delete contract.
+        if product.status == ProductStatus.HARD_BLOCKED:
+            raise ForbiddenException("Cannot delete SKU of hard-blocked product")
+        if sku.reserved_quantity > 0:
+            raise ConflictException("Cannot delete SKU with active reserves")
+
+        sku.deactivate()
+        _ = await self._sku_repo.save(sku)
+        remaining_sku_count = await self._sku_repo.count_by_product(product.id)
+
+        if (
+            remaining_sku_count == 0
+            and product.status == ProductStatus.ON_MODERATION
+        ):
+            product.status = ProductStatus.CREATED
+            product.updated_at = utc_now()
+            saved_product = await self._product_repo.save(product)
+            await self._moderation_client.send_product_deleted(saved_product)
+
+        if sku.active_quantity > 0 and product.status == ProductStatus.MODERATED:
+            await self._event_publisher.publish_sku_out_of_stock(sku.id)

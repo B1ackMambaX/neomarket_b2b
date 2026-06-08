@@ -71,7 +71,7 @@ class SQLAlchemyInventoryRepository(AbstractInventoryRepository):
         sku_ids = sorted({sku_id for sku_id, _ in items})
         rows = await self._session.execute(
             select(SkuModel)
-            .where(SkuModel.id.in_(sku_ids))
+            .where(SkuModel.id.in_(sku_ids), SkuModel.is_active.is_(True))
             .with_for_update()
             .order_by(SkuModel.id)
         )
@@ -167,7 +167,7 @@ class SQLAlchemyInventoryRepository(AbstractInventoryRepository):
         sku_ids = [sku_id for sku_id, _ in normalized_items]
         rows = await self._session.execute(
             select(SkuModel)
-            .where(SkuModel.id.in_(sku_ids))
+            .where(SkuModel.id.in_(sku_ids), SkuModel.is_active.is_(True))
             .with_for_update()
             .order_by(SkuModel.id)
         )
@@ -239,7 +239,7 @@ class SQLAlchemyInventoryRepository(AbstractInventoryRepository):
         sku_ids = [sku_id for sku_id, _ in normalized_items]
         rows = await self._session.execute(
             select(SkuModel)
-            .where(SkuModel.id.in_(sku_ids))
+            .where(SkuModel.id.in_(sku_ids), SkuModel.is_active.is_(True))
             .with_for_update()
             .order_by(SkuModel.id)
         )

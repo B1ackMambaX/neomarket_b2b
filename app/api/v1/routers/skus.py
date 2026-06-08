@@ -93,3 +93,17 @@ async def replace_sku(
         payload=payload,
     )
     return _sku_response(sku)
+
+
+@router.delete(
+    "/{sku_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить SKU",
+    operation_id="deleteSku",
+)
+async def delete_sku(
+    sku_id: UUID,
+    seller_id: Annotated[UUID, Depends(get_current_seller_id)],
+    service: Annotated[SkuService, Depends(get_sku_service)],
+) -> None:
+    await service.delete_sku(seller_id=seller_id, sku_id=sku_id)

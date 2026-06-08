@@ -102,4 +102,8 @@ def get_sku_service(
         sku_repo=SQLAlchemySkuRepository(db),
         product_repo=SQLAlchemyProductRepository(db),
         moderation_client=moderation_client,
+        event_publisher=HttpB2cEventPublisher(
+            url=settings.B2C_URL,
+            service_key=settings.B2B_TO_B2C_KEY,
+        ),
     )

@@ -5,6 +5,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
+    ConflictException,
     DomainException,
     ForbiddenException,
     IdempotencyConflictException,
@@ -20,6 +21,7 @@ _DOMAIN_STATUS_MAP: Final[dict[type[DomainException], int]] = {
     PermissionDeniedException: 403,
     NotOwnerException: 403,
     ForbiddenException: 403,
+    ConflictException: 409,
     InvalidProductStateException: 409,
     InsufficientReservedException: 409,
     IdempotencyConflictException: 409,

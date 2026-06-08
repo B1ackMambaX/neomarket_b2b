@@ -25,7 +25,7 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
                 selectinload(SkuModel.images),
                 selectinload(SkuModel.characteristics),
             )
-            .where(SkuModel.id == sku_id)
+            .where(SkuModel.id == sku_id, SkuModel.is_active.is_(True))
         )
         model = result.scalar_one_or_none()
         return self._to_entity(model) if model else None
@@ -37,7 +37,7 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
                 selectinload(SkuModel.images),
                 selectinload(SkuModel.characteristics),
             )
-            .where(SkuModel.id == sku_id)
+            .where(SkuModel.id == sku_id, SkuModel.is_active.is_(True))
             .with_for_update()
         )
         model = result.scalar_one_or_none()
@@ -52,7 +52,7 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
                 selectinload(SkuModel.images),
                 selectinload(SkuModel.characteristics),
             )
-            .where(SkuModel.id.in_(sku_ids))
+            .where(SkuModel.id.in_(sku_ids), SkuModel.is_active.is_(True))
         )
         return [self._to_entity(m) for m in result.scalars().all()]
 
@@ -103,13 +103,26 @@ class SQLAlchemySkuRepository(AbstractSkuRepository):
                 )
             )
         await self._session.flush()
-        await self._session.refresh(model, attribute_names=["images", "characteristics"])
+        await self._session.refresh(
+            model,
+            attribute_names=[
+                "images",
+                "characteristics",
+                "created_at",
+                "updated_at",
+            ],
+        )
         return self._to_entity(model)
 
     async def count_by_product(self, product_id: UUID) -> int:
         from sqlalchemy import func as sqlfunc
         result = await self._session.execute(
-            select(sqlfunc.count()).select_from(SkuModel).where(SkuModel.product_id == product_id)
+            select(sqlfunc.count())
+            .select_from(SkuModel)
+            .where(
+                SkuModel.product_id == product_id,
+                SkuModel.is_active.is_(True),
+            )
         )
         return result.scalar_one()
 

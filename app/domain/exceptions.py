@@ -40,6 +40,10 @@ class ForbiddenException(DomainException):
     code: ClassVar[str] = "FORBIDDEN"
 
 
+class ConflictException(DomainException):
+    code: ClassVar[str] = "CONFLICT"
+
+
 class InvalidProductStateException(DomainException):
     code: ClassVar[str] = "INVALID_PRODUCT_STATE"
 
